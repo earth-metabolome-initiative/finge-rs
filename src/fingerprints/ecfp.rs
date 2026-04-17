@@ -2,6 +2,7 @@ use alloc::{vec, vec::Vec};
 
 use crate::{
     bit_fingerprint::BitFingerprint,
+    count_fingerprint::CountFingerprint,
     fingerprint::Fingerprint,
     traits::{EcfpGraph, MolecularAtom, MolecularBond},
 };
@@ -17,6 +18,14 @@ pub struct EcfpFingerprint {
     use_bond_types: bool,
     include_ring_membership: bool,
 }
+
+/// Dense folded-count extended-connectivity fingerprint (ECFP).
+///
+/// This uses the same RDKit-style Morgan/ECFP environment hashing as
+/// [`EcfpFingerprint`], but accumulates per-bit counts instead of only setting
+/// presence bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CountEcfpFingerprint(EcfpFingerprint);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NeighborInfo {
@@ -164,12 +173,80 @@ impl EcfpFingerprint {
             );
         }
     }
+
+    #[inline]
+    fn fold_hashes<G, F>(&self, graph: &G, mut emit_folded_index: F)
+    where
+        G: EcfpGraph<NodeId = usize>,
+        G::NodeSymbol: MolecularAtom,
+        G::Bond: MolecularBond<NodeId = usize>,
+        F: FnMut(usize),
+    {
+        if self.fp_size == 0 {
+            return;
+        }
+
+        if self.fp_size.is_power_of_two() {
+            let mask = self.fp_size - 1;
+            self.emit_hashes(graph, |hash| emit_folded_index(hash as usize & mask));
+        } else {
+            let fp_size = self.fp_size;
+            self.emit_hashes(graph, |hash| emit_folded_index(hash as usize % fp_size));
+        }
+    }
+}
+
+impl CountEcfpFingerprint {
+    /// Creates a new folded-count fingerprint with the requested radius and
+    /// size.
+    #[inline]
+    #[must_use]
+    pub const fn new(radius: u8, fp_size: usize) -> Self {
+        Self(EcfpFingerprint::new(radius, fp_size))
+    }
+
+    /// Toggles bond-order-sensitive invariants.
+    #[inline]
+    #[must_use]
+    pub const fn with_use_bond_types(mut self, use_bond_types: bool) -> Self {
+        self.0 = self.0.with_use_bond_types(use_bond_types);
+        self
+    }
+
+    /// Toggles ring-membership participation in the initial atom invariants.
+    #[inline]
+    #[must_use]
+    pub const fn with_include_ring_membership(mut self, include_ring_membership: bool) -> Self {
+        self.0 = self.0.with_include_ring_membership(include_ring_membership);
+        self
+    }
+
+    /// Returns the ECFP radius.
+    #[inline]
+    #[must_use]
+    pub const fn radius(self) -> u8 {
+        self.0.radius()
+    }
+
+    /// Returns the folded count-vector length.
+    #[inline]
+    #[must_use]
+    pub const fn fp_size(self) -> usize {
+        self.0.fp_size()
+    }
 }
 
 impl Default for EcfpFingerprint {
     #[inline]
     fn default() -> Self {
         Self::new(2, 2048)
+    }
+}
+
+impl Default for CountEcfpFingerprint {
+    #[inline]
+    fn default() -> Self {
+        Self(EcfpFingerprint::default())
     }
 }
 
@@ -183,17 +260,24 @@ where
 
     fn compute(&self, graph: &G) -> Self::Output {
         let mut fingerprint = BitFingerprint::zeros(self.fp_size);
-        if self.fp_size == 0 {
-            return fingerprint;
-        }
+        self.fold_hashes(graph, |index| fingerprint.set(index));
 
-        if self.fp_size.is_power_of_two() {
-            let mask = self.fp_size - 1;
-            self.emit_hashes(graph, |hash| fingerprint.set(hash as usize & mask));
-        } else {
-            let fp_size = self.fp_size;
-            self.emit_hashes(graph, |hash| fingerprint.set(hash as usize % fp_size));
-        }
+        fingerprint
+    }
+}
+
+impl<G> Fingerprint<G> for CountEcfpFingerprint
+where
+    G: EcfpGraph<NodeId = usize>,
+    G::NodeSymbol: MolecularAtom,
+    G::Bond: MolecularBond<NodeId = usize>,
+{
+    type Output = CountFingerprint;
+
+    fn compute(&self, graph: &G) -> Self::Output {
+        let mut fingerprint = CountFingerprint::zeros(self.fp_size());
+        self.0
+            .fold_hashes(graph, |index| fingerprint.increment(index));
 
         fingerprint
     }
@@ -352,7 +436,11 @@ mod tests {
     use smiles_parser::smiles::Smiles;
 
     use crate::smiles_support_impl::SmilesRdkitScratch;
-    use crate::{Fingerprint, fingerprints::EcfpFingerprint, test_fixtures::rdkit_ecfp_fixture};
+    use crate::{
+        Fingerprint,
+        fingerprints::{CountEcfpFingerprint, EcfpFingerprint},
+        test_fixtures::rdkit_ecfp_fixture,
+    };
 
     fn observed_active_bits(smiles: &str, fingerprint: EcfpFingerprint) -> Vec<usize> {
         let smiles: Smiles = smiles.parse().expect("fixture SMILES should parse");
@@ -360,6 +448,17 @@ mod tests {
         let graph = scratch.prepare(&smiles);
 
         fingerprint.compute(&graph).active_bits().collect()
+    }
+
+    fn observed_active_counts(
+        smiles: &str,
+        fingerprint: CountEcfpFingerprint,
+    ) -> Vec<(usize, u32)> {
+        let smiles: Smiles = smiles.parse().expect("fixture SMILES should parse");
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&smiles);
+
+        fingerprint.compute(&graph).active_counts().collect()
     }
 
     #[test]
@@ -390,6 +489,50 @@ mod tests {
             );
             assert_eq!(observed_bits, expected_bits, "failed for {smiles}");
         }
+    }
+
+    #[test]
+    fn rdkit_counted_ecfp4_fixtures_match() {
+        for (smiles, expected_counts) in [
+            (
+                "CCO",
+                vec![(80, 1), (222, 1), (294, 1), (807, 1), (1057, 1), (1410, 1)],
+            ),
+            (
+                "CCCC",
+                vec![(80, 2), (294, 2), (640, 1), (794, 2), (1057, 2)],
+            ),
+            ("c1ccccc1", vec![(389, 6), (1088, 6), (1873, 6)]),
+            ("C1CCCCC1", vec![(2, 6), (926, 6), (1028, 6)]),
+        ] {
+            let observed_counts = observed_active_counts(smiles, CountEcfpFingerprint::default());
+            assert_eq!(observed_counts, expected_counts, "failed for {smiles}");
+        }
+    }
+
+    #[test]
+    fn rdkit_counted_ecfp_without_bond_types_matches() {
+        let observed_counts = observed_active_counts(
+            "CC=O",
+            CountEcfpFingerprint::default().with_use_bond_types(false),
+        );
+        assert_eq!(
+            observed_counts,
+            vec![
+                (650, 1),
+                (694, 1),
+                (844, 1),
+                (1057, 1),
+                (1075, 1),
+                (1655, 1)
+            ]
+        );
+    }
+
+    #[test]
+    fn rdkit_counted_ecfp_folded_counts_match() {
+        let observed_counts = observed_active_counts("CC(C)O", CountEcfpFingerprint::new(0, 64));
+        assert_eq!(observed_counts, vec![(1, 1), (33, 2), (39, 1)]);
     }
 
     #[test]

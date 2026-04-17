@@ -4,4 +4,4 @@ mod atom_pair;
 mod ecfp;
 
 pub use self::atom_pair::AtomPairFingerprint;
-pub use self::ecfp::EcfpFingerprint;
+pub use self::ecfp::{CountEcfpFingerprint, EcfpFingerprint};

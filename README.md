@@ -10,7 +10,9 @@ Right now the crate provides:
 
 - generic traits for molecular atoms, bonds, and graphs
 - `BitFingerprint`
+- `CountFingerprint`
 - bit-only, non-chiral Morgan/ECFP through `EcfpFingerprint`
+- folded-count, non-chiral Morgan/ECFP through `CountEcfpFingerprint`
 - bit-only, non-chiral 2D AtomPair through `AtomPairFingerprint`
 - optional RDKit-normalized `smiles-parser` integration behind `smiles-support`
 
@@ -30,7 +32,10 @@ Under `smiles-support`, `SmilesRdkitScratch` prepares a RDKit-normalized
 ```rust
 # #[cfg(feature = "smiles-support")]
 # fn main() {
-use finge_rs::{AtomPairFingerprint, EcfpFingerprint, Fingerprint, smiles_support::SmilesRdkitScratch};
+use finge_rs::{
+    AtomPairFingerprint, CountEcfpFingerprint, EcfpFingerprint, Fingerprint,
+    smiles_support::SmilesRdkitScratch,
+};
 use smiles_parser::smiles::Smiles;
 
 let smiles: Smiles = "CCO".parse().expect("example SMILES should parse");
@@ -38,8 +43,10 @@ let mut scratch = SmilesRdkitScratch::default();
 let graph = scratch.try_prepare(&smiles).expect("fingerprint preparation should succeed");
 let atom_pair = AtomPairFingerprint::default().compute(&graph);
 let ecfp = EcfpFingerprint::default().compute(&graph);
+let counted_ecfp = CountEcfpFingerprint::default().compute(&graph);
 # let _ = atom_pair;
 # let _ = ecfp;
+# let _ = counted_ecfp;
 # }
 # #[cfg(not(feature = "smiles-support"))]
 # fn main() {}

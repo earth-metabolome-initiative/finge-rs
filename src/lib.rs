@@ -6,6 +6,7 @@ extern crate alloc;
 extern crate std;
 
 pub mod bit_fingerprint;
+pub mod count_fingerprint;
 pub mod fingerprint;
 pub mod fingerprints;
 pub mod traits;
@@ -17,16 +18,17 @@ pub use crate::smiles_support::{
 };
 pub use crate::{
     bit_fingerprint::BitFingerprint,
+    count_fingerprint::CountFingerprint,
     fingerprint::Fingerprint,
-    fingerprints::{AtomPairFingerprint, EcfpFingerprint},
+    fingerprints::{AtomPairFingerprint, CountEcfpFingerprint, EcfpFingerprint},
     traits::{AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph},
 };
 
 /// Common imports for working with this crate.
 pub mod prelude {
     pub use crate::{
-        AtomPairFingerprint, AtomPairGraph, BitFingerprint, EcfpFingerprint, EcfpGraph,
-        Fingerprint, MolecularAtom, MolecularBond, MolecularGraph,
+        AtomPairFingerprint, AtomPairGraph, BitFingerprint, CountEcfpFingerprint, CountFingerprint,
+        EcfpFingerprint, EcfpGraph, Fingerprint, MolecularAtom, MolecularBond, MolecularGraph,
     };
     #[cfg(feature = "smiles-support")]
     pub use crate::{

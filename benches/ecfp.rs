@@ -2,7 +2,9 @@ use core::hint::black_box;
 use std::io::Read;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use finge_rs::{EcfpFingerprint, Fingerprint, smiles_support::SmilesRdkitScratch};
+use finge_rs::{
+    CountEcfpFingerprint, EcfpFingerprint, Fingerprint, smiles_support::SmilesRdkitScratch,
+};
 use flate2::read::GzDecoder;
 use smiles_parser::smiles::Smiles;
 
@@ -38,11 +40,13 @@ fn load_raw_corpus() -> Vec<Smiles> {
 }
 
 fn bench_corpus(c: &mut Criterion, corpus: &[Smiles]) {
-    let mut group = c.benchmark_group("ecfp_smiles_with_rdkit_prep");
-    group.sample_size(20);
-    group.measurement_time(core::time::Duration::from_secs(3));
-    group.warm_up_time(core::time::Duration::from_secs(1));
-    group.throughput(Throughput::Elements(corpus.len() as u64));
+    bench_bit_ecfp(c, corpus);
+    bench_counted_ecfp(c, corpus);
+}
+
+fn bench_bit_ecfp(c: &mut Criterion, corpus: &[Smiles]) {
+    let mut group = c.benchmark_group("ecfp_bits_smiles_with_rdkit_prep");
+    configure_group(&mut group, corpus.len());
 
     for &(radius, fp_size) in BENCH_CASES {
         let fingerprint = EcfpFingerprint::new(radius, fp_size);
@@ -62,6 +66,40 @@ fn bench_corpus(c: &mut Criterion, corpus: &[Smiles]) {
     }
 
     group.finish();
+}
+
+fn bench_counted_ecfp(c: &mut Criterion, corpus: &[Smiles]) {
+    let mut group = c.benchmark_group("ecfp_counts_smiles_with_rdkit_prep");
+    configure_group(&mut group, corpus.len());
+
+    for &(radius, fp_size) in BENCH_CASES {
+        let fingerprint = CountEcfpFingerprint::new(radius, fp_size);
+        group.bench_with_input(
+            BenchmarkId::new(format!("r{radius}_n{fp_size}"), corpus.len()),
+            &fingerprint,
+            |b, fingerprint| {
+                let mut scratch = SmilesRdkitScratch::default();
+                b.iter(|| {
+                    for graph in corpus {
+                        let prepared = scratch.prepare(graph);
+                        black_box(fingerprint.compute(&prepared));
+                    }
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+fn configure_group(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    corpus_len: usize,
+) {
+    group.sample_size(20);
+    group.measurement_time(core::time::Duration::from_secs(4));
+    group.warm_up_time(core::time::Duration::from_secs(1));
+    group.throughput(Throughput::Elements(corpus_len as u64));
 }
 
 fn ecfp_benchmarks(c: &mut Criterion) {
