@@ -2,19 +2,11 @@ use core::hint::black_box;
 use std::io::Read;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use finge_rs::{EcfpFingerprint, Fingerprint, smiles_support::SmilesRdkitScratch};
+use finge_rs::{AtomPairFingerprint, Fingerprint};
 use flate2::read::GzDecoder;
 use smiles_parser::smiles::Smiles;
 
-const BENCH_CASES: &[(u8, usize)] = &[
-    (0, 64),
-    (1, 128),
-    (2, 128),
-    (2, 2048),
-    (4, 2048),
-    (5, 2048),
-    (5, 4096),
-];
+const BENCH_SIZES: &[usize] = &[64, 128, 256, 512, 1024, 2048, 4096];
 
 fn load_raw_corpus() -> Vec<Smiles> {
     let mut decoder = GzDecoder::new(
@@ -38,23 +30,21 @@ fn load_raw_corpus() -> Vec<Smiles> {
 }
 
 fn bench_corpus(c: &mut Criterion, corpus: &[Smiles]) {
-    let mut group = c.benchmark_group("ecfp_smiles_with_rdkit_prep");
+    let mut group = c.benchmark_group("atom_pair_raw_smiles");
     group.sample_size(20);
     group.measurement_time(core::time::Duration::from_secs(3));
     group.warm_up_time(core::time::Duration::from_secs(1));
     group.throughput(Throughput::Elements(corpus.len() as u64));
 
-    for &(radius, fp_size) in BENCH_CASES {
-        let fingerprint = EcfpFingerprint::new(radius, fp_size);
+    for &fp_size in BENCH_SIZES {
+        let fingerprint = AtomPairFingerprint::new(fp_size);
         group.bench_with_input(
-            BenchmarkId::new(format!("r{radius}_n{fp_size}"), corpus.len()),
+            BenchmarkId::new(format!("n{fp_size}"), corpus.len()),
             &fingerprint,
             |b, fingerprint| {
-                let mut scratch = SmilesRdkitScratch::default();
                 b.iter(|| {
                     for graph in corpus {
-                        let prepared = scratch.prepare(graph);
-                        black_box(fingerprint.compute(&prepared));
+                        black_box(fingerprint.compute(graph));
                     }
                 });
             },
@@ -64,10 +54,10 @@ fn bench_corpus(c: &mut Criterion, corpus: &[Smiles]) {
     group.finish();
 }
 
-fn ecfp_benchmarks(c: &mut Criterion) {
+fn atom_pair_benchmarks(c: &mut Criterion) {
     let raw_corpus = load_raw_corpus();
     bench_corpus(c, &raw_corpus);
 }
 
-criterion_group!(benches, ecfp_benchmarks);
+criterion_group!(benches, atom_pair_benchmarks);
 criterion_main!(benches);

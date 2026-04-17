@@ -11,22 +11,28 @@ pub mod fingerprints;
 pub mod traits;
 
 #[cfg(feature = "smiles-support")]
-pub use crate::smiles_support::{SmilesEcfpGraph, SmilesEcfpScratch};
+pub use crate::smiles_support::{
+    SmilesEcfpGraph, SmilesEcfpScratch, SmilesPreparationError, SmilesRdkitGraph,
+    SmilesRdkitScratch,
+};
 pub use crate::{
     bit_fingerprint::BitFingerprint,
     fingerprint::Fingerprint,
-    fingerprints::EcfpFingerprint,
-    traits::{EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph},
+    fingerprints::{AtomPairFingerprint, EcfpFingerprint},
+    traits::{AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph},
 };
 
 /// Common imports for working with this crate.
 pub mod prelude {
     pub use crate::{
-        BitFingerprint, EcfpFingerprint, EcfpGraph, Fingerprint, MolecularAtom, MolecularBond,
-        MolecularGraph,
+        AtomPairFingerprint, AtomPairGraph, BitFingerprint, EcfpFingerprint, EcfpGraph,
+        Fingerprint, MolecularAtom, MolecularBond, MolecularGraph,
     };
     #[cfg(feature = "smiles-support")]
-    pub use crate::{SmilesEcfpGraph, SmilesEcfpScratch};
+    pub use crate::{
+        SmilesEcfpGraph, SmilesEcfpScratch, SmilesPreparationError, SmilesRdkitGraph,
+        SmilesRdkitScratch,
+    };
 }
 
 #[cfg(feature = "smiles-support")]

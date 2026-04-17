@@ -36,3 +36,6 @@ jobs:
 
       - name: Check benchmark target
         run: cargo bench --bench ecfp --features smiles-support --no-run
+
+      - name: Check AtomPair benchmark target
+        run: cargo bench --bench atom_pair --features smiles-support --no-run

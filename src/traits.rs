@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 use geometric_traits::traits::{Graph, MonopartiteGraph, MonoplexGraph, Vocabulary};
 
 /// Trait implemented by molecular atom node types.
@@ -63,4 +65,46 @@ where
 
     /// Returns the RDKit-style bond invariant used during neighborhood expansion.
     fn ecfp_bond_invariant(&self, bond: &Self::Bond, use_bond_types: bool) -> u32;
+}
+
+/// Graphs that can provide RDKit-style AtomPair atom codes.
+pub trait AtomPairGraph: MolecularGraph<NodeId = usize>
+where
+    Self::NodeSymbol: MolecularAtom,
+{
+    /// Returns the RDKit-style AtomPair atom code for one atom.
+    fn atom_pair_atom_code(&self, atom_id: usize) -> u32;
+
+    /// Returns the per-atom adjacency lists and RDKit-style AtomPair atom
+    /// codes.
+    ///
+    /// Backends can override this to build both in one pass when that is
+    /// cheaper than computing them separately.
+    fn atom_pair_adjacency_and_codes(&self) -> (Vec<Vec<usize>>, Vec<u32>)
+    where
+        Self::Bond: MolecularBond<NodeId = usize>,
+    {
+        let atom_count = self.atom_count();
+        let mut adjacency = Vec::with_capacity(atom_count);
+        let mut atom_codes = Vec::with_capacity(atom_count);
+
+        for atom_id in 0..atom_count {
+            let neighbors = self
+                .bonds(atom_id)
+                .filter_map(|bond| {
+                    if bond.source() == atom_id {
+                        Some(bond.target())
+                    } else if bond.target() == atom_id {
+                        Some(bond.source())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            adjacency.push(neighbors);
+            atom_codes.push(self.atom_pair_atom_code(atom_id));
+        }
+
+        (adjacency, atom_codes)
+    }
 }

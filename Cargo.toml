@@ -12,6 +12,7 @@ homepage = "https://github.com/earth-metabolome-initiative/finge-rs"
 [features]
 default = []
 smiles-support = ["dep:elements_rs", "dep:smiles-parser"]
+datasets = ["smiles-support", "smiles-parser/datasets"]
 
 [dependencies]
 bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
@@ -31,6 +32,11 @@ smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-p
 
 [[bench]]
 name = "ecfp"
+harness = false
+required-features = ["smiles-support"]
+
+[[bench]]
+name = "atom_pair"
 harness = false
 required-features = ["smiles-support"]
 

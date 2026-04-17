@@ -351,12 +351,12 @@ mod tests {
 
     use smiles_parser::smiles::Smiles;
 
-    use crate::smiles_support_impl::SmilesEcfpScratch;
+    use crate::smiles_support_impl::SmilesRdkitScratch;
     use crate::{Fingerprint, fingerprints::EcfpFingerprint, test_fixtures::rdkit_ecfp_fixture};
 
     fn observed_active_bits(smiles: &str, fingerprint: EcfpFingerprint) -> Vec<usize> {
         let smiles: Smiles = smiles.parse().expect("fixture SMILES should parse");
-        let mut scratch = SmilesEcfpScratch::default();
+        let mut scratch = SmilesRdkitScratch::default();
         let graph = scratch.prepare(&smiles);
 
         fingerprint.compute(&graph).active_bits().collect()
@@ -395,15 +395,12 @@ mod tests {
     #[test]
     fn rdkit_ecfp_matrix_matches_reference_corpus() {
         let fixture = rdkit_ecfp_fixture();
-        assert_eq!(fixture.molecules.len(), 128);
+        assert_eq!(fixture.molecules.len(), 100_000);
         assert_eq!(fixture.cases.len(), 42);
-        assert_eq!(
-            fixture.source.dataset,
-            "MLCIL/scikit-fingerprints tests/hiv_mol.csv.zip"
-        );
+        assert_eq!(fixture.source.dataset, "PubChem CID-SMILES");
         assert_eq!(
             fixture.source.selection,
-            "128 smallest parser-compatible unique SMILES, sorted by (length, SMILES)"
+            "first 100000 unique SMILES parseable by smiles-parser and RDKit, in dataset order"
         );
         assert_eq!(fixture.source.generator, "RDKit MorganGenerator");
         assert!(!fixture.source.include_chirality);
@@ -451,11 +448,11 @@ mod tests {
     fn preparing_the_same_smiles_twice_is_stable() {
         let smiles: Smiles = "c1ccncc1".parse().expect("fixture SMILES should parse");
         let fingerprint = EcfpFingerprint::default();
-        let mut scratch = SmilesEcfpScratch::default();
+        let mut scratch = SmilesRdkitScratch::default();
         let graph = scratch.prepare(&smiles);
         let reused = fingerprint.compute(&graph);
 
-        let mut other_scratch = SmilesEcfpScratch::default();
+        let mut other_scratch = SmilesRdkitScratch::default();
         let other_graph = other_scratch.prepare(&smiles);
         let other = fingerprint.compute(&other_graph);
 
