@@ -18,7 +18,7 @@ Right now the crate provides:
 
 Current RDKit parity coverage:
 
-- 100000 unique PubChem CID-SMILES entries accepted by both `smiles-parser` and RDKit
+- 1024 `smiles-parser`- and RDKit-parseable SMILES from the tracked scikit-fingerprints HIV fixture corpus
 - ECFP radii `0` through `5`
 - ECFP and AtomPair bit sizes `64`, `128`, `256`, `512`, `1024`, `2048`, and `4096`
 

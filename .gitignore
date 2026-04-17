@@ -21,3 +21,5 @@ target
 #.idea/
 papers
 scripts/
+tests/fixtures/pubchem_first_100000_parseable_smiles.txt.gz
+tests/fixtures/scikit_smallest_10000_parseable_smiles.txt.gz

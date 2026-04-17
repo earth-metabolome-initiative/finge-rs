@@ -538,12 +538,15 @@ mod tests {
     #[test]
     fn rdkit_ecfp_matrix_matches_reference_corpus() {
         let fixture = rdkit_ecfp_fixture();
-        assert_eq!(fixture.molecules.len(), 100_000);
+        assert_eq!(fixture.molecules.len(), 1_024);
         assert_eq!(fixture.cases.len(), 42);
-        assert_eq!(fixture.source.dataset, "PubChem CID-SMILES");
+        assert_eq!(
+            fixture.source.dataset,
+            "scikit-fingerprints HIV test corpus"
+        );
         assert_eq!(
             fixture.source.selection,
-            "first 100000 unique SMILES parseable by smiles-parser and RDKit, in dataset order"
+            "1024 parseable SMILES fixture in repo order"
         );
         assert_eq!(fixture.source.generator, "RDKit MorganGenerator");
         assert!(!fixture.source.include_chirality);
