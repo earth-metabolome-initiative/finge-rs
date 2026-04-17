@@ -1,0 +1,45 @@
+[package]
+name = "finge-rs"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Trait-first no_std molecular fingerprints"
+readme = "README.md"
+rust-version = "1.86"
+repository = "https://github.com/earth-metabolome-initiative/finge-rs"
+homepage = "https://github.com/earth-metabolome-initiative/finge-rs"
+
+[features]
+default = []
+smiles-support = ["dep:elements_rs", "dep:smiles-parser"]
+
+[dependencies]
+bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
+elements_rs = { version = "0.2.2", optional = true }
+geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", branch = "main", default-features = false, features = ["alloc"] }
+smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false, optional = true }
+
+[dev-dependencies]
+criterion = "=0.8.2"
+elements_rs = "0.2.2"
+flate2 = "1.1.9"
+indicatif = "0.18.4"
+rayon = "1.11.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false, features = ["datasets"] }
+
+[[bench]]
+name = "ecfp"
+harness = false
+required-features = ["smiles-support"]
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+strip = "debuginfo"
+
+[profile.bench]
+inherits = "release"
+debug = true
