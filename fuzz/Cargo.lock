@@ -101,6 +101,8 @@ dependencies = [
  "bitvec",
  "elements_rs",
  "geometric-traits",
+ "smarts-parser",
+ "smarts-validator",
  "smiles-parser",
 ]
 
@@ -111,6 +113,7 @@ dependencies = [
  "arbitrary",
  "finge-rs",
  "libfuzzer-sys",
+ "smarts-validator",
  "smiles-parser",
 ]
 
@@ -318,6 +321,28 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "smarts-parser"
+version = "0.1.0"
+source = "git+https://github.com/earth-metabolome-initiative/smarts-rs?rev=9e48edae78913bf6d9dfe00ad576baab56cb7d43#9e48edae78913bf6d9dfe00ad576baab56cb7d43"
+dependencies = [
+ "elements_rs",
+ "smiles-parser",
+ "thiserror",
+]
+
+[[package]]
+name = "smarts-validator"
+version = "0.1.0"
+source = "git+https://github.com/earth-metabolome-initiative/smarts-rs?rev=9e48edae78913bf6d9dfe00ad576baab56cb7d43#9e48edae78913bf6d9dfe00ad576baab56cb7d43"
+dependencies = [
+ "elements_rs",
+ "geometric-traits",
+ "smarts-parser",
+ "smiles-parser",
+ "thiserror",
+]
 
 [[package]]
 name = "smiles-parser"

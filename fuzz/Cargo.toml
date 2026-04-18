@@ -14,10 +14,11 @@ members = ["."]
 arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"
 smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false }
+smarts-validator = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "9e48edae78913bf6d9dfe00ad576baab56cb7d43", package = "smarts-validator", default-features = false }
 
 [dependencies.finge-rs]
 path = ".."
-features = ["smiles-support"]
+features = ["smiles-support", "smarts-support"]
 
 [[bin]]
 name = "ecfp"
@@ -36,6 +37,13 @@ bench = false
 [[bin]]
 name = "topological_torsion"
 path = "fuzz_targets/topological_torsion.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "maccs"
+path = "fuzz_targets/maccs.rs"
 test = false
 doc = false
 bench = false

@@ -2,10 +2,11 @@
 
 use finge_rs::{
     AtomPairFingerprint, BitFingerprint, CountEcfpFingerprint, CountFingerprint, EcfpFingerprint,
-    Fingerprint, LayeredCountEcfpFingerprint, LayeredCountFingerprint, TopologicalTorsionFingerprint,
-    smiles_support::SmilesRdkitScratch,
+    Fingerprint, LayeredCountEcfpFingerprint, LayeredCountFingerprint, MaccsFingerprint,
+    TopologicalTorsionFingerprint, smiles_support::SmilesRdkitScratch,
 };
 use smiles_parser::smiles::Smiles;
+use smarts_validator::PreparedTarget;
 
 const MAX_INPUT_BYTES: usize = 4096;
 
@@ -184,4 +185,22 @@ pub fn fuzz_topological_torsion(smiles: Smiles) {
     for index in prepared_shortest_paths.active_bits() {
         assert!(prepared_default.contains(index));
     }
+}
+
+pub fn fuzz_maccs(smiles: Smiles) {
+    let fingerprint = MaccsFingerprint::new().expect("MACCS SMARTS should compile");
+    let target = PreparedTarget::new(smiles.clone());
+    let bits = fingerprint.compute(&target);
+    assert_bit_fingerprint_basics(&bits);
+
+    let explicit_h = smiles.with_explicit_hydrogens();
+    let explicit_h_target = PreparedTarget::new(explicit_h);
+    let explicit_h_bits = fingerprint.compute(&explicit_h_target);
+    assert_bit_fingerprint_basics(&explicit_h_bits);
+
+    let second_run = fingerprint.compute(&target);
+    assert_eq!(
+        bits.active_bits().collect::<Vec<_>>(),
+        second_run.active_bits().collect::<Vec<_>>()
+    );
 }
