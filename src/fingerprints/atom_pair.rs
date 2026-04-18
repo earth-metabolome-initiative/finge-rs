@@ -254,7 +254,7 @@ mod tests {
 
     use smiles_parser::smiles::Smiles;
 
-    use super::AtomPairFingerprint;
+    use super::{AtomPairFingerprint, hashed_atom_pair_bit, visit_atom_pairs};
     use crate::{
         Fingerprint, smiles_support_impl::SmilesRdkitScratch,
         test_fixtures::rdkit_atom_pair_fixture,
@@ -331,5 +331,81 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn atom_pair_builder_methods_round_trip_custom_settings() {
+        let fingerprint = AtomPairFingerprint::new(513)
+            .with_min_distance(2)
+            .with_max_distance(5)
+            .with_count_simulation(false);
+
+        assert_eq!(fingerprint.min_distance(), 2);
+        assert_eq!(fingerprint.max_distance(), 5);
+        assert_eq!(fingerprint.fp_size(), 513);
+        assert!(!fingerprint.count_simulation());
+    }
+
+    #[test]
+    fn atom_pair_returns_empty_for_zero_size_or_too_few_atoms() {
+        let smiles: Smiles = "CC".parse().expect("fixture SMILES should parse");
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&smiles);
+
+        let zero_size = AtomPairFingerprint::new(0).compute(&graph);
+        assert_eq!(zero_size.len(), 0);
+        assert!(zero_size.active_bits().next().is_none());
+
+        let singleton: Smiles = "C".parse().expect("fixture SMILES should parse");
+        let singleton_graph = scratch.prepare(&singleton);
+        let singleton_fp = AtomPairFingerprint::default().compute(&singleton_graph);
+        assert_eq!(singleton_fp.len(), 2048);
+        assert!(singleton_fp.active_bits().next().is_none());
+    }
+
+    #[test]
+    fn atom_pair_count_simulation_returns_empty_when_effective_size_is_zero() {
+        let observed = observed_active_bits("CC", AtomPairFingerprint::new(3));
+        assert!(observed.is_empty());
+    }
+
+    #[test]
+    fn atom_pair_non_power_of_two_sizes_produce_in_range_bits() {
+        for fingerprint in [
+            AtomPairFingerprint::new(12),
+            AtomPairFingerprint::new(10).with_count_simulation(false),
+        ] {
+            let observed = observed_active_bits("CCCC", fingerprint);
+            assert!(!observed.is_empty());
+            assert!(observed.iter().all(|&bit| bit < fingerprint.fp_size()));
+        }
+    }
+
+    #[test]
+    fn visit_atom_pairs_respects_min_and_max_distance() {
+        let adjacency = vec![vec![1], vec![0, 2], vec![1, 3], vec![2]];
+
+        let mut all_pairs = Vec::new();
+        visit_atom_pairs(&adjacency, 1, 2, |left, right, distance| {
+            all_pairs.push((left, right, distance));
+        });
+        assert_eq!(
+            all_pairs,
+            vec![(0, 1, 1), (0, 2, 2), (1, 2, 1), (1, 3, 2), (2, 3, 1),]
+        );
+
+        let mut exact_two = Vec::new();
+        visit_atom_pairs(&adjacency, 2, 2, |left, right, distance| {
+            exact_two.push((left, right, distance));
+        });
+        assert_eq!(exact_two, vec![(0, 2, 2), (1, 3, 2)]);
+    }
+
+    #[test]
+    fn hashed_atom_pair_bit_is_symmetric() {
+        assert_eq!(
+            hashed_atom_pair_bit(0x1234_5678, 0x9abc_def0, 3),
+            hashed_atom_pair_bit(0x9abc_def0, 0x1234_5678, 3)
+        );
     }
 }

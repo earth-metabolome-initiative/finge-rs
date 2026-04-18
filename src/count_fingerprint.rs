@@ -180,4 +180,34 @@ mod tests {
             vec![(5, 2)]
         );
     }
+
+    #[test]
+    fn count_fingerprint_exposes_slice_and_empty_state() {
+        let empty = CountFingerprint::zeros(0);
+        assert!(empty.is_empty());
+        assert_eq!(empty.as_slice(), &[] as &[u32]);
+
+        let fingerprint = CountFingerprint::from(vec![0, 2, 0, 1]);
+        assert!(!fingerprint.is_empty());
+        assert_eq!(fingerprint.as_slice(), &[0, 2, 0, 1]);
+        assert_eq!(
+            fingerprint.active_counts().collect::<alloc::vec::Vec<_>>(),
+            vec![(1, 2), (3, 1)]
+        );
+    }
+
+    #[test]
+    fn layered_count_fingerprint_reports_empty_layers_state() {
+        let mut fingerprint = LayeredCountFingerprint::zeros(0, 8);
+
+        assert!(fingerprint.is_empty());
+        assert_eq!(fingerprint.len(), 0);
+        assert!(fingerprint.layers().is_empty());
+        assert!(fingerprint.layer(0).is_none());
+
+        fingerprint.increment(0, 3);
+
+        assert!(fingerprint.is_empty());
+        assert!(fingerprint.layer(0).is_none());
+    }
 }

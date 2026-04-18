@@ -70,6 +70,8 @@ impl From<BitVec<usize, Lsb0>> for BitFingerprint {
 mod tests {
     use alloc::vec;
 
+    use bitvec::{bitvec, prelude::BitVec};
+
     use super::BitFingerprint;
 
     #[test]
@@ -86,5 +88,23 @@ mod tests {
         assert!(fingerprint.contains(1));
         assert!(!fingerprint.contains(2));
         assert_eq!(fingerprint.len(), 16);
+    }
+
+    #[test]
+    fn bit_fingerprint_exposes_bits_and_empty_state() {
+        let empty = BitFingerprint::zeros(0);
+        assert!(empty.is_empty());
+        assert_eq!(empty.as_bitslice().len(), 0);
+
+        let raw: BitVec<usize, bitvec::order::Lsb0> =
+            bitvec![usize, bitvec::order::Lsb0; 1, 0, 1, 0];
+        let fingerprint = BitFingerprint::from(raw.clone());
+
+        assert!(!fingerprint.is_empty());
+        assert_eq!(fingerprint.as_bitslice(), raw.as_bitslice());
+        assert_eq!(
+            fingerprint.active_bits().collect::<alloc::vec::Vec<_>>(),
+            vec![0, 2]
+        );
     }
 }
