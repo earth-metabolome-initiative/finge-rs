@@ -118,6 +118,20 @@ pub(crate) struct RdkitTopologicalTorsionFixture {
     pub(crate) cases: Vec<RdkitTopologicalTorsionCase>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct RdkitMaccsSource {
+    pub(crate) dataset: String,
+    pub(crate) selection: String,
+    pub(crate) generator: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RdkitMaccsFixture {
+    pub(crate) source: RdkitMaccsSource,
+    pub(crate) molecules: Vec<String>,
+    pub(crate) active_bits: Vec<Vec<usize>>,
+}
+
 pub(crate) fn rdkit_ecfp_fixture() -> &'static RdkitEcfpFixture {
     static FIXTURE: OnceLock<RdkitEcfpFixture> = OnceLock::new();
     FIXTURE.get_or_init(|| {
@@ -187,5 +201,18 @@ pub(crate) fn rdkit_topological_torsion_fixture() -> &'static RdkitTopologicalTo
             .expect("RDKit Topological Torsion reference fixture should decompress");
         serde_json::from_str(&json)
             .expect("RDKit Topological Torsion reference fixture should deserialize")
+    })
+}
+
+pub(crate) fn rdkit_maccs_fixture() -> &'static RdkitMaccsFixture {
+    static FIXTURE: OnceLock<RdkitMaccsFixture> = OnceLock::new();
+    FIXTURE.get_or_init(|| {
+        let mut decoder =
+            GzDecoder::new(&include_bytes!("../tests/fixtures/rdkit_maccs_reference.json.gz")[..]);
+        let mut json = String::new();
+        decoder
+            .read_to_string(&mut json)
+            .expect("RDKit MACCS reference fixture should decompress");
+        serde_json::from_str(&json).expect("RDKit MACCS reference fixture should deserialize")
     })
 }

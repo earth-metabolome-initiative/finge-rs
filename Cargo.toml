@@ -13,11 +13,14 @@ homepage = "https://github.com/earth-metabolome-initiative/finge-rs"
 default = []
 smiles-support = ["dep:elements_rs", "dep:smiles-parser"]
 datasets = ["smiles-support", "smiles-parser/datasets"]
+smarts-support = ["dep:smarts-parser", "dep:smarts-validator", "dep:smiles-parser"]
 
 [dependencies]
 bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
 elements_rs = { version = "0.2.2", optional = true }
 geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", branch = "main", default-features = false, features = ["alloc"] }
+smarts-parser = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "9e48edae78913bf6d9dfe00ad576baab56cb7d43", package = "smarts-parser", default-features = false, optional = true }
+smarts-validator = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "9e48edae78913bf6d9dfe00ad576baab56cb7d43", package = "smarts-validator", default-features = false, optional = true }
 smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false, optional = true }
 
 [dev-dependencies]
