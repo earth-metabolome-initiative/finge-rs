@@ -1,0 +1,44 @@
+[package]
+name = "finge-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+members = ["."]
+
+[dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+libfuzzer-sys = "0.4"
+smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false }
+
+[dependencies.finge-rs]
+path = ".."
+features = ["smiles-support"]
+
+[[bin]]
+name = "ecfp"
+path = "fuzz_targets/ecfp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "atom_pair"
+path = "fuzz_targets/atom_pair.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "topological_torsion"
+path = "fuzz_targets/topological_torsion.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1
