@@ -521,16 +521,101 @@ where
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use smiles_parser::smiles::Smiles;
+    use geometric_traits::traits::{Graph, MonopartiteGraph, MonoplexGraph};
+    use smiles_parser::{
+        bond::{Bond, bond_edge::BondEdge},
+        smiles::Smiles,
+    };
 
+    use super::{
+        CountEcfpFingerprint, EcfpFingerprint, LayeredCountEcfpFingerprint, adjacency, other_node,
+    };
     use crate::smiles_support_impl::SmilesRdkitScratch;
     use crate::{
-        Fingerprint,
-        fingerprints::{CountEcfpFingerprint, EcfpFingerprint, LayeredCountEcfpFingerprint},
+        CountFingerprint, EcfpGraph, Fingerprint, MolecularBond, MolecularGraph,
         test_fixtures::{
             rdkit_counted_ecfp_fixture, rdkit_ecfp_fixture, rdkit_layered_counted_ecfp_fixture,
         },
     };
+
+    struct MalformedBondSmiles {
+        inner: Smiles,
+        malformed_on: usize,
+        malformed_bond: BondEdge,
+    }
+
+    impl MalformedBondSmiles {
+        fn new(smiles: &str, malformed_on: usize, malformed_bond: BondEdge) -> Self {
+            Self {
+                inner: smiles.parse().expect("fixture SMILES should parse"),
+                malformed_on,
+                malformed_bond,
+            }
+        }
+    }
+
+    impl Graph for MalformedBondSmiles {
+        fn has_nodes(&self) -> bool {
+            self.inner.has_nodes()
+        }
+
+        fn has_edges(&self) -> bool {
+            self.inner.has_edges()
+        }
+    }
+
+    impl MonoplexGraph for MalformedBondSmiles {
+        type Edge = <Smiles as MonoplexGraph>::Edge;
+        type Edges = <Smiles as MonoplexGraph>::Edges;
+
+        fn edges(&self) -> &Self::Edges {
+            self.inner.edges()
+        }
+    }
+
+    impl MonopartiteGraph for MalformedBondSmiles {
+        type NodeId = <Smiles as MonopartiteGraph>::NodeId;
+        type NodeSymbol = <Smiles as MonopartiteGraph>::NodeSymbol;
+        type Nodes = <Smiles as MonopartiteGraph>::Nodes;
+
+        fn nodes_vocabulary(&self) -> &Self::Nodes {
+            self.inner.nodes_vocabulary()
+        }
+    }
+
+    impl MolecularGraph for MalformedBondSmiles {
+        type Bond = BondEdge;
+
+        fn atom(&self, node_id: Self::NodeId) -> Option<&Self::NodeSymbol> {
+            self.inner.node_by_id(node_id)
+        }
+
+        fn bonds(&self, node_id: Self::NodeId) -> impl Iterator<Item = Self::Bond> + '_ {
+            let mut bonds = self.inner.edges_for_node(node_id).collect::<Vec<_>>();
+            if node_id == self.malformed_on {
+                bonds.push(self.malformed_bond);
+            }
+            bonds.into_iter()
+        }
+    }
+
+    impl EcfpGraph for MalformedBondSmiles {
+        fn ecfp_atom_invariant(&self, atom_id: usize, _include_ring_membership: bool) -> u32 {
+            atom_id as u32 + 1
+        }
+
+        fn ecfp_bond_invariant(&self, bond: &Self::Bond, use_bond_types: bool) -> u32 {
+            if !use_bond_types {
+                return 1;
+            }
+            match bond.bond_type() {
+                Bond::Single | Bond::Up | Bond::Down | Bond::Aromatic => 1,
+                Bond::Double => 2,
+                Bond::Triple => 3,
+                Bond::Quadruple => 4,
+            }
+        }
+    }
 
     fn observed_active_bits(smiles: &str, fingerprint: EcfpFingerprint) -> Vec<usize> {
         let smiles: Smiles = smiles.parse().expect("fixture SMILES should parse");
@@ -814,5 +899,111 @@ mod tests {
         let other = fingerprint.compute(&other_graph);
 
         assert_eq!(reused, other);
+    }
+
+    #[test]
+    fn ecfp_builder_methods_round_trip_custom_settings() {
+        assert_eq!(
+            LayeredCountEcfpFingerprint::default(),
+            LayeredCountEcfpFingerprint::new(2, 2048)
+        );
+
+        let bit = EcfpFingerprint::new(3, 513)
+            .with_use_bond_types(false)
+            .with_include_ring_membership(false);
+        assert_eq!(bit.radius(), 3);
+        assert_eq!(bit.fp_size(), 513);
+
+        let counted = CountEcfpFingerprint::new(4, 257)
+            .with_use_bond_types(false)
+            .with_include_ring_membership(false);
+        assert_eq!(counted.radius(), 4);
+        assert_eq!(counted.fp_size(), 257);
+
+        let layered = LayeredCountEcfpFingerprint::new(5, 129)
+            .with_use_bond_types(false)
+            .with_include_ring_membership(false);
+        assert_eq!(layered.radius(), 5);
+        assert_eq!(layered.fp_size(), 129);
+    }
+
+    #[test]
+    fn ecfp_zero_sized_and_empty_graph_outputs_are_empty() {
+        let smiles = Smiles::new();
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&smiles);
+
+        let empty_bits = EcfpFingerprint::new(2, 16).compute(&graph);
+        assert_eq!(empty_bits.len(), 16);
+        assert!(empty_bits.active_bits().next().is_none());
+
+        let bits = EcfpFingerprint::new(2, 0).compute(&graph);
+        assert_eq!(bits.len(), 0);
+        assert!(bits.active_bits().next().is_none());
+
+        let counts = CountEcfpFingerprint::new(2, 0).compute(&graph);
+        assert!(counts.is_empty());
+        assert!(counts.active_counts().next().is_none());
+
+        let layered = LayeredCountEcfpFingerprint::new(2, 0).compute(&graph);
+        assert_eq!(layered.len(), 3);
+        assert!(layered.formula().is_empty());
+        assert!(layered.layers().iter().all(CountFingerprint::is_empty));
+    }
+
+    #[test]
+    fn ecfp_non_power_of_two_sizes_keep_all_indices_in_range() {
+        let smiles: Smiles = "CCO".parse().expect("fixture SMILES should parse");
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&smiles);
+
+        let bit = EcfpFingerprint::new(2, 10).compute(&graph);
+        assert!(!bit.active_bits().collect::<Vec<_>>().is_empty());
+        assert!(bit.active_bits().all(|index| index < 10));
+
+        let counted = CountEcfpFingerprint::new(2, 10).compute(&graph);
+        assert!(!counted.active_counts().collect::<Vec<_>>().is_empty());
+        assert!(counted.active_counts().all(|(index, _)| index < 10));
+
+        let layered = LayeredCountEcfpFingerprint::new(2, 10).compute(&graph);
+        assert_eq!(layered.len(), 3);
+        for layer in layered.layers() {
+            assert!(layer.active_counts().all(|(index, _)| index < 10));
+        }
+    }
+
+    #[test]
+    fn ecfp_adjacency_helpers_ignore_malformed_bonds() {
+        let malformed_bond: BondEdge = (1, 2, Bond::Single, None);
+        let graph = MalformedBondSmiles::new("CCO", 0, malformed_bond);
+
+        let first_bond: BondEdge = (0, 1, Bond::Single, None);
+        let malformed_probe: BondEdge = (1, 2, Bond::Single, None);
+        assert_eq!(other_node(&first_bond, 0), Some(1));
+        assert_eq!(other_node(&first_bond, 1), Some(0));
+        assert_eq!(other_node(&malformed_probe, 0), None);
+
+        let observed = adjacency(&graph, false);
+        assert_eq!(
+            observed[0]
+                .iter()
+                .map(|neighbor| (neighbor.other, neighbor.edge_idx, neighbor.bond_invariant))
+                .collect::<Vec<_>>(),
+            vec![(1, 0, 1)]
+        );
+        assert_eq!(
+            observed[1]
+                .iter()
+                .map(|neighbor| (neighbor.other, neighbor.edge_idx, neighbor.bond_invariant))
+                .collect::<Vec<_>>(),
+            vec![(0, 0, 1), (2, 1, 1)]
+        );
+        assert_eq!(
+            observed[2]
+                .iter()
+                .map(|neighbor| (neighbor.other, neighbor.edge_idx, neighbor.bond_invariant))
+                .collect::<Vec<_>>(),
+            vec![(1, 1, 1)]
+        );
     }
 }

@@ -148,3 +148,161 @@ where
         adjacency
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use alloc::vec;
+
+    use geometric_traits::traits::{Graph, MonopartiteGraph, MonoplexGraph};
+    use smiles_parser::{
+        bond::{Bond, bond_edge::BondEdge},
+        smiles::Smiles,
+    };
+
+    use crate::traits::{AtomPairGraph, MolecularGraph, TopologicalTorsionGraph};
+
+    struct MalformedBondSmiles {
+        inner: Smiles,
+        malformed_on: usize,
+        malformed_bond: BondEdge,
+    }
+
+    impl MalformedBondSmiles {
+        fn new(smiles: &str, malformed_on: usize, malformed_bond: BondEdge) -> Self {
+            Self {
+                inner: smiles.parse().expect("fixture SMILES should parse"),
+                malformed_on,
+                malformed_bond,
+            }
+        }
+    }
+
+    impl Graph for MalformedBondSmiles {
+        fn has_nodes(&self) -> bool {
+            self.inner.has_nodes()
+        }
+
+        fn has_edges(&self) -> bool {
+            self.inner.has_edges()
+        }
+    }
+
+    impl MonoplexGraph for MalformedBondSmiles {
+        type Edge = <Smiles as MonoplexGraph>::Edge;
+        type Edges = <Smiles as MonoplexGraph>::Edges;
+
+        fn edges(&self) -> &Self::Edges {
+            self.inner.edges()
+        }
+    }
+
+    impl MonopartiteGraph for MalformedBondSmiles {
+        type NodeId = <Smiles as MonopartiteGraph>::NodeId;
+        type NodeSymbol = <Smiles as MonopartiteGraph>::NodeSymbol;
+        type Nodes = <Smiles as MonopartiteGraph>::Nodes;
+
+        fn nodes_vocabulary(&self) -> &Self::Nodes {
+            self.inner.nodes_vocabulary()
+        }
+    }
+
+    impl MolecularGraph for MalformedBondSmiles {
+        type Bond = BondEdge;
+
+        fn atom(&self, node_id: Self::NodeId) -> Option<&Self::NodeSymbol> {
+            self.inner.node_by_id(node_id)
+        }
+
+        fn bonds(&self, node_id: Self::NodeId) -> impl Iterator<Item = Self::Bond> + '_ {
+            let mut bonds = self
+                .inner
+                .edges_for_node(node_id)
+                .collect::<alloc::vec::Vec<_>>();
+            if node_id == self.malformed_on {
+                bonds.push(self.malformed_bond);
+            }
+            bonds.into_iter()
+        }
+    }
+
+    impl AtomPairGraph for MalformedBondSmiles {
+        fn atom_pair_atom_code(&self, atom_id: usize) -> u32 {
+            atom_id as u32 + 1
+        }
+    }
+
+    impl TopologicalTorsionGraph for MalformedBondSmiles {
+        fn topological_torsion_atom_code(&self, atom_id: usize, branch_subtract: u8) -> u32 {
+            atom_id as u32 + u32::from(branch_subtract)
+        }
+    }
+
+    #[test]
+    fn molecular_graph_default_helpers_cover_empty_and_non_empty_smiles() {
+        let empty = Smiles::new();
+        assert_eq!(MolecularGraph::atom_count(&empty), 0);
+        assert!(MolecularGraph::is_empty_molecule(&empty));
+
+        let smiles: Smiles = "CCO".parse().expect("fixture SMILES should parse");
+        assert_eq!(MolecularGraph::atom_count(&smiles), 3);
+        assert!(!MolecularGraph::is_empty_molecule(&smiles));
+    }
+
+    #[test]
+    fn atom_pair_default_adjacency_and_codes_match_smiles_topology() {
+        let empty = Smiles::new();
+        let (empty_adjacency, empty_codes) = AtomPairGraph::atom_pair_adjacency_and_codes(&empty);
+        assert!(empty_adjacency.is_empty());
+        assert!(empty_codes.is_empty());
+
+        let smiles: Smiles = "CCO".parse().expect("fixture SMILES should parse");
+        let (mut adjacency, atom_codes) = AtomPairGraph::atom_pair_adjacency_and_codes(&smiles);
+        for neighbors in &mut adjacency {
+            neighbors.sort_unstable();
+        }
+
+        let expected_codes = (0..MolecularGraph::atom_count(&smiles))
+            .map(|atom_id| AtomPairGraph::atom_pair_atom_code(&smiles, atom_id))
+            .collect::<alloc::vec::Vec<_>>();
+
+        assert_eq!(adjacency, vec![vec![1], vec![0, 2], vec![1]]);
+        assert_eq!(atom_codes, expected_codes);
+    }
+
+    #[test]
+    fn topological_torsion_default_adjacency_matches_smiles_topology() {
+        let empty = Smiles::new();
+        assert!(TopologicalTorsionGraph::topological_torsion_adjacency(&empty).is_empty());
+
+        let smiles: Smiles = "C1CC1O".parse().expect("fixture SMILES should parse");
+        let mut adjacency = TopologicalTorsionGraph::topological_torsion_adjacency(&smiles);
+        for neighbors in &mut adjacency {
+            neighbors.sort_unstable();
+        }
+
+        assert_eq!(
+            adjacency,
+            vec![vec![1, 2], vec![0, 2], vec![0, 1, 3], vec![2]]
+        );
+    }
+
+    #[test]
+    fn default_adjacency_helpers_ignore_malformed_bonds() {
+        let malformed_bond: BondEdge = (1, 2, Bond::Single, None);
+        let graph = MalformedBondSmiles::new("CCO", 0, malformed_bond);
+
+        let (mut atom_pair_adjacency, atom_codes) =
+            AtomPairGraph::atom_pair_adjacency_and_codes(&graph);
+        for neighbors in &mut atom_pair_adjacency {
+            neighbors.sort_unstable();
+        }
+        assert_eq!(atom_pair_adjacency, vec![vec![1], vec![0, 2], vec![1]]);
+        assert_eq!(atom_codes, vec![1, 2, 3]);
+
+        let mut torsion_adjacency = TopologicalTorsionGraph::topological_torsion_adjacency(&graph);
+        for neighbors in &mut torsion_adjacency {
+            neighbors.sort_unstable();
+        }
+        assert_eq!(torsion_adjacency, vec![vec![1], vec![0, 2], vec![1]]);
+    }
+}

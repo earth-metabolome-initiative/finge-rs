@@ -485,13 +485,87 @@ fn torsion_atom_code_for_position(
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use smiles_parser::smiles::Smiles;
-
-    use super::TopologicalTorsionFingerprint;
-    use crate::{
-        Fingerprint, smiles_support_impl::SmilesRdkitScratch,
-        test_fixtures::rdkit_topological_torsion_fixture,
+    use geometric_traits::traits::{Graph, MonopartiteGraph, MonoplexGraph};
+    use smiles_parser::{
+        bond::{Bond, bond_edge::BondEdge},
+        smiles::Smiles,
     };
+
+    use super::{
+        TopologicalTorsionFingerprint, closed_cycle_path_is_canonical, compute_shortest_distances,
+        reverse_atom_path_is_preferred, topological_torsion_edge_adjacency,
+    };
+    use crate::{
+        Fingerprint, MolecularGraph, TopologicalTorsionGraph,
+        smiles_support_impl::SmilesRdkitScratch, test_fixtures::rdkit_topological_torsion_fixture,
+    };
+
+    struct MalformedBondSmiles {
+        inner: Smiles,
+        malformed_on: usize,
+        malformed_bond: BondEdge,
+    }
+
+    impl MalformedBondSmiles {
+        fn new(smiles: &str, malformed_on: usize, malformed_bond: BondEdge) -> Self {
+            Self {
+                inner: smiles.parse().expect("fixture SMILES should parse"),
+                malformed_on,
+                malformed_bond,
+            }
+        }
+    }
+
+    impl Graph for MalformedBondSmiles {
+        fn has_nodes(&self) -> bool {
+            self.inner.has_nodes()
+        }
+
+        fn has_edges(&self) -> bool {
+            self.inner.has_edges()
+        }
+    }
+
+    impl MonoplexGraph for MalformedBondSmiles {
+        type Edge = <Smiles as MonoplexGraph>::Edge;
+        type Edges = <Smiles as MonoplexGraph>::Edges;
+
+        fn edges(&self) -> &Self::Edges {
+            self.inner.edges()
+        }
+    }
+
+    impl MonopartiteGraph for MalformedBondSmiles {
+        type NodeId = <Smiles as MonopartiteGraph>::NodeId;
+        type NodeSymbol = <Smiles as MonopartiteGraph>::NodeSymbol;
+        type Nodes = <Smiles as MonopartiteGraph>::Nodes;
+
+        fn nodes_vocabulary(&self) -> &Self::Nodes {
+            self.inner.nodes_vocabulary()
+        }
+    }
+
+    impl MolecularGraph for MalformedBondSmiles {
+        type Bond = BondEdge;
+
+        fn atom(&self, node_id: Self::NodeId) -> Option<&Self::NodeSymbol> {
+            self.inner.node_by_id(node_id)
+        }
+
+        fn bonds(&self, node_id: Self::NodeId) -> impl Iterator<Item = Self::Bond> + '_ {
+            let mut bonds = self.inner.edges_for_node(node_id).collect::<Vec<_>>();
+            if node_id == self.malformed_on {
+                bonds.push(self.malformed_bond);
+            }
+            bonds.into_iter()
+        }
+    }
+
+    impl TopologicalTorsionGraph for MalformedBondSmiles {
+        fn topological_torsion_atom_code(&self, atom_id: usize, branch_subtract: u8) -> u32 {
+            atom_id as u32 + u32::from(branch_subtract)
+        }
+    }
 
     fn observed_active_bits(
         smiles: &str,
@@ -576,5 +650,128 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn topological_torsion_builder_methods_round_trip_custom_settings() {
+        let fingerprint = TopologicalTorsionFingerprint::new(513)
+            .with_torsion_atom_count(5)
+            .with_count_simulation(false)
+            .with_only_shortest_paths(true);
+
+        assert_eq!(fingerprint.fp_size(), 513);
+        assert_eq!(fingerprint.torsion_atom_count(), 5);
+        assert!(!fingerprint.count_simulation());
+        assert!(fingerprint.only_shortest_paths());
+    }
+
+    #[test]
+    fn topological_torsion_returns_empty_for_zero_size_or_invalid_sizes() {
+        let smiles: Smiles = "CCCCC".parse().expect("fixture SMILES should parse");
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&smiles);
+
+        let zero_size = TopologicalTorsionFingerprint::new(0).compute(&graph);
+        assert_eq!(zero_size.len(), 0);
+        assert!(zero_size.active_bits().next().is_none());
+
+        let too_short = TopologicalTorsionFingerprint::new(2048)
+            .with_torsion_atom_count(1)
+            .compute(&graph);
+        assert_eq!(too_short.len(), 2048);
+        assert!(too_short.active_bits().next().is_none());
+
+        let graph_too_small = TopologicalTorsionFingerprint::new(2048)
+            .with_torsion_atom_count(6)
+            .compute(&graph);
+        assert_eq!(graph_too_small.len(), 2048);
+        assert!(graph_too_small.active_bits().next().is_none());
+
+        let tiny_count_sim = TopologicalTorsionFingerprint::new(3).compute(&graph);
+        assert_eq!(tiny_count_sim.len(), 3);
+        assert!(tiny_count_sim.active_bits().next().is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "torsion_atom_count <= 7")]
+    fn topological_torsion_rejects_oversized_torsions() {
+        let smiles: Smiles = "CCCCCCCC".parse().expect("fixture SMILES should parse");
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&smiles);
+
+        let _ = TopologicalTorsionFingerprint::new(2048)
+            .with_torsion_atom_count(8)
+            .compute(&graph);
+    }
+
+    #[test]
+    fn topological_torsion_non_power_of_two_sizes_produce_in_range_bits() {
+        for fingerprint in [
+            TopologicalTorsionFingerprint::new(12),
+            TopologicalTorsionFingerprint::new(10).with_count_simulation(false),
+        ] {
+            let observed = observed_active_bits("CCCCC", fingerprint);
+            assert!(!observed.is_empty());
+            assert!(observed.iter().all(|&bit| bit < fingerprint.fp_size()));
+        }
+    }
+
+    #[test]
+    fn topological_torsion_helper_functions_match_expected_path_behavior() {
+        assert!(!reverse_atom_path_is_preferred(&[0, 1, 2, 3]));
+        assert!(reverse_atom_path_is_preferred(&[3, 2, 1, 0]));
+        assert!(!reverse_atom_path_is_preferred(&[1, 2, 2, 1]));
+
+        assert!(closed_cycle_path_is_canonical(&[0, 1, 2, 0]));
+        assert!(!closed_cycle_path_is_canonical(&[1, 2, 0, 1]));
+
+        let adjacency = vec![
+            vec![(1, 0)],
+            vec![(0, 0), (2, 1)],
+            vec![(1, 1), (3, 2)],
+            vec![(2, 2)],
+        ];
+        let mut distances = vec![usize::MAX; adjacency.len()];
+        compute_shortest_distances(&adjacency, 0, 2, &mut distances);
+        assert_eq!(distances, vec![0, 1, 2, usize::MAX]);
+    }
+
+    #[test]
+    fn topological_torsion_edge_adjacency_assigns_one_edge_id_per_bond() {
+        let smiles: Smiles = "C1CC1O".parse().expect("fixture SMILES should parse");
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&smiles);
+
+        let (mut adjacency, edge_count) = topological_torsion_edge_adjacency(&graph);
+        for neighbors in &mut adjacency {
+            neighbors.sort_unstable();
+        }
+
+        assert_eq!(edge_count, 4);
+        assert_eq!(
+            adjacency,
+            vec![
+                vec![(1, 0), (2, 1)],
+                vec![(0, 0), (2, 2)],
+                vec![(0, 1), (1, 2), (3, 3)],
+                vec![(2, 3)],
+            ]
+        );
+    }
+
+    #[test]
+    fn topological_torsion_edge_adjacency_ignores_malformed_bonds() {
+        let malformed_bond: BondEdge = (1, 2, Bond::Single, None);
+        let graph = MalformedBondSmiles::new("CCO", 0, malformed_bond);
+        let (mut adjacency, edge_count) = topological_torsion_edge_adjacency(&graph);
+        for neighbors in &mut adjacency {
+            neighbors.sort_unstable();
+        }
+
+        assert_eq!(edge_count, 2);
+        assert_eq!(
+            adjacency,
+            vec![vec![(1, 0)], vec![(0, 0), (2, 1)], vec![(1, 1)]]
+        );
     }
 }

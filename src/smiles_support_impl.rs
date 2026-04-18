@@ -777,10 +777,25 @@ fn rdkit_atom_pair_unknown_element_pi_electrons(
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use smiles_parser::smiles::Smiles;
+    use elements_rs::Element;
+    use geometric_traits::traits::{Edges, Graph, MonoplexGraph, TypedNode};
+    use smiles_parser::{
+        bond::{Bond, bond_edge::BondEdge},
+        smiles::{AromaticityAssignmentApplicationError, Smiles},
+    };
 
-    use super::SmilesRdkitScratch;
-    use crate::{EcfpGraph, MolecularGraph};
+    use super::{
+        SmilesPreparationError, SmilesRdkitScratch, hash_u32_sequence,
+        hypervalent_halogen_oxoacid_center_double_oxygen_count, normalize_smiles_for_rdkit,
+        normalized_hypervalent_halogen_oxoacid_charge, rdkit_atom_invariant,
+        rdkit_atom_pair_atom_code, rdkit_atom_pair_pi_electrons, rdkit_atom_pair_type_index,
+        rdkit_atom_pair_unknown_element_pi_electrons, rdkit_atomic_weight, rdkit_bond_order,
+        rdkit_delta_mass, rdkit_topological_torsion_atom_code,
+    };
+    use crate::{
+        AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph,
+        TopologicalTorsionGraph,
+    };
 
     fn observed_connectivity_invariants(smiles: &str, include_ring_membership: bool) -> Vec<u32> {
         let smiles: Smiles = smiles.parse().expect("fixture SMILES should parse");
@@ -844,5 +859,372 @@ mod tests {
             let observed = observed_connectivity_invariants(smiles, false);
             assert_eq!(observed, expected, "failed for {smiles}");
         }
+    }
+
+    #[test]
+    fn smiles_parser_adapter_helpers_cover_atom_and_bond_views() {
+        let smiles: Smiles = "C=O".parse().expect("fixture SMILES should parse");
+        let atom = smiles.node_by_id(0).expect("first atom should exist");
+        let bond = smiles
+            .edge_for_node_pair((0, 1))
+            .expect("fixture bond should exist");
+
+        assert_eq!(atom.atom_type(), atom.node_type());
+        assert_eq!(bond.source(), 0);
+        assert_eq!(bond.target(), 1);
+        assert_eq!(bond.bond_type(), smiles_parser::bond::Bond::Double);
+        assert_eq!(MolecularGraph::atom(&smiles, 0), Some(atom));
+        assert_eq!(MolecularGraph::bonds(&smiles, 0).count(), 1);
+    }
+
+    #[test]
+    fn rdkit_atomic_weight_and_delta_mass_helpers_match_expected_values() {
+        for (element, expected) in [
+            (Element::Tc, 98.0),
+            (Element::Pm, 145.0),
+            (Element::Po, 209.0),
+            (Element::At, 210.0),
+            (Element::Rn, 222.0),
+            (Element::Fr, 223.0),
+            (Element::Ra, 226.0),
+            (Element::Ac, 227.0),
+            (Element::Np, 237.0),
+            (Element::Pu, 244.0),
+            (Element::Am, 243.0),
+            (Element::Cm, 247.0),
+            (Element::Bk, 247.0),
+            (Element::Cf, 251.0),
+            (Element::Es, 252.0),
+            (Element::Fm, 257.0),
+            (Element::Md, 258.0),
+            (Element::No, 259.0),
+            (Element::Lr, 262.0),
+        ] {
+            assert_eq!(rdkit_atomic_weight(element), expected);
+        }
+        assert_eq!(rdkit_atomic_weight(Element::Cl), 35.45);
+        assert_eq!(hash_u32_sequence(&[1, 2, 3]), hash_u32_sequence(&[1, 2, 3]));
+
+        let unlabeled: Smiles = "CC".parse().expect("fixture SMILES should parse");
+        let isotope: Smiles = "[13CH4]".parse().expect("fixture SMILES should parse");
+        let wildcard: Smiles = "*".parse().expect("fixture SMILES should parse");
+
+        assert_eq!(rdkit_delta_mass(unlabeled.node_by_id(0).unwrap()), 0);
+        assert_eq!(rdkit_delta_mass(isotope.node_by_id(0).unwrap()), 0);
+        assert_eq!(rdkit_delta_mass(wildcard.node_by_id(0).unwrap()), 0);
+    }
+
+    #[test]
+    fn hypervalent_halogen_helpers_detect_oxoacid_patterns() {
+        let smiles: Smiles = "O=Cl(=O)O".parse().expect("fixture SMILES should parse");
+        let non_halogen: Smiles = "CO".parse().expect("fixture SMILES should parse");
+
+        assert_eq!(
+            hypervalent_halogen_oxoacid_center_double_oxygen_count(&smiles, 1),
+            Some(2)
+        );
+        assert_eq!(
+            normalized_hypervalent_halogen_oxoacid_charge(
+                &smiles,
+                1,
+                smiles.node_by_id(1).unwrap()
+            ),
+            Some(2)
+        );
+        assert_eq!(
+            normalized_hypervalent_halogen_oxoacid_charge(
+                &smiles,
+                0,
+                smiles.node_by_id(0).unwrap()
+            ),
+            Some(-1)
+        );
+        assert_eq!(
+            hypervalent_halogen_oxoacid_center_double_oxygen_count(&smiles, 0),
+            None
+        );
+        assert_eq!(
+            hypervalent_halogen_oxoacid_center_double_oxygen_count(&non_halogen, 0),
+            None
+        );
+    }
+
+    #[test]
+    fn rdkit_atom_pair_type_and_unknown_element_helpers_cover_special_cases() {
+        let carbon: Smiles = "C".parse().expect("fixture SMILES should parse");
+        let wildcard: Smiles = "*".parse().expect("fixture SMILES should parse");
+
+        assert_eq!(rdkit_atom_pair_type_index(carbon.node_by_id(0).unwrap()), 1);
+        assert_eq!(
+            rdkit_atom_pair_type_index(wildcard.node_by_id(0).unwrap()),
+            15
+        );
+
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Mn, 1, 2, false),
+            2
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Mn, 2, 4, false),
+            1
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Re, 2, 3, false),
+            3
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Tc, 3, 1, true),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Mo, 3, 1, true),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::U, 1, 2, false),
+            2
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Ta, 4, 2, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::V, 3, 2, false),
+            2
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Fe, 4, 2, false),
+            2
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Os, 1, 1, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Co, 2, 1, false),
+            1
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Ir, 1, 2, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Pt, 2, 2, false),
+            2
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Dy, 1, 1, false),
+            1
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Tb, 1, 2, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Bi, 2, 3, true),
+            3
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Cr, 0, 1, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::W, 3, 3, false),
+            3
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Np, 5, 2, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Nb, 4, 1, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Os, 0, 1, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Os, 1, 2, false),
+            2
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Os, 2, 1, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Os, 3, 2, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Os, 4, 1, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Rh, 2, 2, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Rh, 3, 1, false),
+            1
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Rh, 3, 2, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Rh, 4, 2, false),
+            2
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Rh, 4, 1, false),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_unknown_element_pi_electrons(Element::Ni, 2, 1, false),
+            0
+        );
+    }
+
+    #[test]
+    fn rdkit_atom_code_helpers_cover_invalid_atoms_and_special_pi_cases() {
+        let wildcard: Smiles = "*".parse().expect("fixture SMILES should parse");
+        let aromatic: Smiles = "c1ccccc1".parse().expect("fixture SMILES should parse");
+        let halogen: Smiles = "O=Cl(=O)O".parse().expect("fixture SMILES should parse");
+        let bromine: Smiles = "O=Br(=O)O".parse().expect("fixture SMILES should parse");
+        let iodine: Smiles = "O=I(=O)O".parse().expect("fixture SMILES should parse");
+        let phosphorus: Smiles = "OP(=O)O".parse().expect("fixture SMILES should parse");
+        let sulfur: Smiles = "O=S=O".parse().expect("fixture SMILES should parse");
+        let tungsten: Smiles = "O=[W](=O)(O)O"
+            .parse()
+            .expect("fixture SMILES should parse");
+
+        assert_eq!(rdkit_atom_pair_atom_code(&wildcard, 99), 0);
+        assert_eq!(rdkit_topological_torsion_atom_code(&wildcard, 99, 1), 0);
+        assert_eq!(
+            rdkit_atom_pair_pi_electrons(&wildcard, 0, wildcard.node_by_id(0).unwrap()),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_pi_electrons(&aromatic, 0, aromatic.node_by_id(0).unwrap()),
+            1
+        );
+        assert_eq!(
+            rdkit_atom_pair_pi_electrons(&halogen, 0, halogen.node_by_id(0).unwrap()),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_pi_electrons(&halogen, 1, halogen.node_by_id(1).unwrap()),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_pi_electrons(&bromine, 1, bromine.node_by_id(1).unwrap()),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_pi_electrons(&iodine, 1, iodine.node_by_id(1).unwrap()),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_pi_electrons(&phosphorus, 1, phosphorus.node_by_id(1).unwrap()),
+            0
+        );
+        assert_eq!(
+            rdkit_atom_pair_pi_electrons(&sulfur, 1, sulfur.node_by_id(1).unwrap()),
+            2
+        );
+        assert_eq!(
+            rdkit_atom_pair_pi_electrons(&tungsten, 1, tungsten.node_by_id(1).unwrap()),
+            0
+        );
+    }
+
+    #[test]
+    fn rdkit_atom_invariant_handles_invalid_atom_ids() {
+        let smiles: Smiles = "CC".parse().expect("fixture SMILES should parse");
+        let ring = smiles.ring_atom_membership();
+        assert_eq!(rdkit_atom_invariant(&smiles, 99, true, &ring), 0);
+    }
+
+    #[test]
+    fn smiles_preparation_error_display_includes_inner_error() {
+        let error = SmilesPreparationError::Aromaticity(
+            AromaticityAssignmentApplicationError::MissingBondEdge {
+                node_a: 1,
+                node_b: 2,
+            },
+        );
+
+        let rendered = alloc::format!("{error}");
+        assert!(rendered.contains("failed to apply RDKit-default aromaticity"));
+        assert!(rendered.contains("bond edge does not exist in graph"));
+    }
+
+    #[test]
+    fn normalize_and_prepare_smiles_for_rdkit_cover_graph_wrapper_methods() {
+        let aromatic: Smiles = "c1ccccc1".parse().expect("fixture SMILES should parse");
+        let normalized =
+            normalize_smiles_for_rdkit(&aromatic).expect("normalization should succeed");
+        assert!(normalized.nodes().iter().all(|atom| atom.aromatic()));
+
+        let empty = Smiles::new();
+        let mut scratch = SmilesRdkitScratch::default();
+        {
+            let empty_graph = scratch.prepare(&empty);
+            assert!(!empty_graph.has_nodes());
+            assert!(!empty_graph.has_edges());
+            assert!(MolecularGraph::atom(&empty_graph, 0).is_none());
+        }
+
+        let smiles: Smiles = "C=O".parse().expect("fixture SMILES should parse");
+        let graph = scratch
+            .try_prepare(&smiles)
+            .expect("preparation should succeed");
+
+        assert!(graph.has_nodes());
+        assert!(graph.has_edges());
+        assert_eq!(Edges::number_of_edges(graph.edges()), 2);
+        assert_eq!(
+            MolecularGraph::atom(&graph, 0).and_then(|atom| atom.element()),
+            Some(Element::C)
+        );
+        assert_eq!(MolecularGraph::bonds(&graph, 0).count(), 1);
+        assert_ne!(
+            TopologicalTorsionGraph::topological_torsion_atom_code(&smiles, 0, 1),
+            0
+        );
+        assert_ne!(AtomPairGraph::atom_pair_atom_code(&graph, 0), 0);
+        assert_ne!(
+            TopologicalTorsionGraph::topological_torsion_atom_code(&graph, 0, 1),
+            0
+        );
+
+        let double_bond = MolecularGraph::bonds(&graph, 0)
+            .next()
+            .expect("fixture bond should exist");
+        assert_eq!(graph.ecfp_bond_invariant(&double_bond, false), 1);
+        assert_eq!(graph.ecfp_bond_invariant(&double_bond, true), 2);
+
+        let halogen_smiles: Smiles = "O=Cl(=O)O".parse().expect("fixture SMILES should parse");
+        let mut halogen_scratch = SmilesRdkitScratch::default();
+        let halogen_graph = halogen_scratch.prepare(&halogen_smiles);
+        let halogen_bond: BondEdge = (0, 1, Bond::Double, None);
+        assert_eq!(halogen_graph.ecfp_bond_invariant(&halogen_bond, true), 1);
+
+        let quadruple_bond: BondEdge = (0, 1, Bond::Quadruple, None);
+        assert_eq!(graph.ecfp_bond_invariant(&quadruple_bond, true), 4);
+    }
+
+    #[test]
+    fn rdkit_bond_order_covers_all_supported_bond_variants() {
+        use smiles_parser::bond::Bond;
+
+        assert_eq!(rdkit_bond_order(Bond::Single), 1);
+        assert_eq!(rdkit_bond_order(Bond::Up), 1);
+        assert_eq!(rdkit_bond_order(Bond::Down), 1);
+        assert_eq!(rdkit_bond_order(Bond::Aromatic), 1);
+        assert_eq!(rdkit_bond_order(Bond::Double), 2);
+        assert_eq!(rdkit_bond_order(Bond::Triple), 3);
+        assert_eq!(rdkit_bond_order(Bond::Quadruple), 4);
     }
 }
