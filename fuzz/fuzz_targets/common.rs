@@ -8,7 +8,7 @@ use finge_rs::{
 use smiles_parser::smiles::Smiles;
 use smarts_validator::PreparedTarget;
 
-const MAX_INPUT_BYTES: usize = 4096;
+const MAX_INPUT_BYTES: usize = 128;
 
 pub fn parse_smiles(input: String) -> Option<Smiles> {
     if input.is_empty() || input.len() > MAX_INPUT_BYTES {
