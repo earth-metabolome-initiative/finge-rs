@@ -39,3 +39,6 @@ jobs:
 
       - name: Check AtomPair benchmark target
         run: cargo bench --bench atom_pair --features smiles-support --no-run
+
+      - name: Check TopologicalTorsion benchmark target
+        run: cargo bench --bench topological_torsion --features smiles-support --no-run

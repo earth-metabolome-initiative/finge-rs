@@ -40,6 +40,11 @@ name = "atom_pair"
 harness = false
 required-features = ["smiles-support"]
 
+[[bench]]
+name = "topological_torsion"
+harness = false
+required-features = ["smiles-support"]
+
 [profile.release]
 opt-level = 3
 codegen-units = 1

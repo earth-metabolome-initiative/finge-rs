@@ -9,7 +9,9 @@ use smiles_parser::{
     },
 };
 
-use crate::traits::{AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph};
+use crate::traits::{
+    AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph, TopologicalTorsionGraph,
+};
 
 const ATOM_PAIR_TYPE_BUCKETS: [u8; 15] = [5, 6, 7, 8, 9, 14, 15, 16, 17, 33, 34, 35, 51, 52, 53];
 const ATOM_PAIR_NUM_PI_BITS: u32 = 2;
@@ -67,6 +69,28 @@ fn rdkit_atom_pair_atom_code(smiles: &Smiles, atom_id: usize) -> u32 {
     };
 
     let branch_count = u32::try_from(smiles.edge_count_for_node(atom_id)).unwrap_or(u32::MAX);
+    let num_pi = rdkit_atom_pair_pi_electrons(smiles, atom_id, atom) % ATOM_PAIR_MAX_NUM_PI;
+    let type_index = rdkit_atom_pair_type_index(atom);
+
+    (branch_count % ATOM_PAIR_MAX_NUM_BRANCHES)
+        | (num_pi << ATOM_PAIR_NUM_BRANCH_BITS)
+        | (type_index << (ATOM_PAIR_NUM_BRANCH_BITS + ATOM_PAIR_NUM_PI_BITS))
+}
+
+#[inline]
+fn rdkit_topological_torsion_atom_code(
+    smiles: &Smiles,
+    atom_id: usize,
+    branch_subtract: u8,
+) -> u32 {
+    let Some(atom) = smiles.node_by_id(atom_id) else {
+        return 0;
+    };
+
+    let branch_count = smiles
+        .edge_count_for_node(atom_id)
+        .saturating_sub(usize::from(branch_subtract));
+    let branch_count = u32::try_from(branch_count).unwrap_or(u32::MAX);
     let num_pi = rdkit_atom_pair_pi_electrons(smiles, atom_id, atom) % ATOM_PAIR_MAX_NUM_PI;
     let type_index = rdkit_atom_pair_type_index(atom);
 
@@ -618,6 +642,20 @@ impl AtomPairGraph for SmilesRdkitGraph<'_> {
     #[inline]
     fn atom_pair_atom_code(&self, atom_id: usize) -> u32 {
         rdkit_atom_pair_atom_code(self.smiles, atom_id)
+    }
+}
+
+impl TopologicalTorsionGraph for Smiles {
+    #[inline]
+    fn topological_torsion_atom_code(&self, atom_id: usize, branch_subtract: u8) -> u32 {
+        rdkit_topological_torsion_atom_code(self, atom_id, branch_subtract)
+    }
+}
+
+impl TopologicalTorsionGraph for SmilesRdkitGraph<'_> {
+    #[inline]
+    fn topological_torsion_atom_code(&self, atom_id: usize, branch_subtract: u8) -> u32 {
+        rdkit_topological_torsion_atom_code(self.smiles, atom_id, branch_subtract)
     }
 }
 

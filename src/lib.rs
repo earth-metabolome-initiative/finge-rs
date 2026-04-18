@@ -18,17 +18,25 @@ pub use crate::smiles_support::{
 };
 pub use crate::{
     bit_fingerprint::BitFingerprint,
-    count_fingerprint::CountFingerprint,
+    count_fingerprint::{CountFingerprint, LayeredCountFingerprint},
     fingerprint::Fingerprint,
-    fingerprints::{AtomPairFingerprint, CountEcfpFingerprint, EcfpFingerprint},
-    traits::{AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph},
+    fingerprints::{
+        AtomPairFingerprint, CountEcfpFingerprint, EcfpFingerprint, LayeredCountEcfpFingerprint,
+        TopologicalTorsionFingerprint,
+    },
+    traits::{
+        AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph,
+        TopologicalTorsionGraph,
+    },
 };
 
 /// Common imports for working with this crate.
 pub mod prelude {
     pub use crate::{
         AtomPairFingerprint, AtomPairGraph, BitFingerprint, CountEcfpFingerprint, CountFingerprint,
-        EcfpFingerprint, EcfpGraph, Fingerprint, MolecularAtom, MolecularBond, MolecularGraph,
+        EcfpFingerprint, EcfpGraph, Fingerprint, LayeredCountEcfpFingerprint,
+        LayeredCountFingerprint, MolecularAtom, MolecularBond, MolecularGraph,
+        TopologicalTorsionFingerprint, TopologicalTorsionGraph,
     };
     #[cfg(feature = "smiles-support")]
     pub use crate::{

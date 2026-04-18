@@ -70,11 +70,74 @@ impl From<Vec<u32>> for CountFingerprint {
     }
 }
 
+/// Exact-radius layered count fingerprint backed by one [`CountFingerprint`]
+/// per Morgan layer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LayeredCountFingerprint {
+    layers: Vec<CountFingerprint>,
+}
+
+impl LayeredCountFingerprint {
+    /// Creates an all-zero layered count fingerprint.
+    #[inline]
+    #[must_use]
+    pub fn zeros(layer_count: usize, len: usize) -> Self {
+        Self {
+            layers: (0..layer_count)
+                .map(|_| CountFingerprint::zeros(len))
+                .collect(),
+        }
+    }
+
+    /// Returns the per-layer fingerprints.
+    #[inline]
+    #[must_use]
+    pub fn layers(&self) -> &[CountFingerprint] {
+        &self.layers
+    }
+
+    /// Returns one layer by exact radius.
+    #[inline]
+    #[must_use]
+    pub fn layer(&self, radius: usize) -> Option<&CountFingerprint> {
+        self.layers.get(radius)
+    }
+
+    /// Returns the radius-0 layer.
+    #[inline]
+    #[must_use]
+    pub fn formula(&self) -> &CountFingerprint {
+        &self.layers[0]
+    }
+
+    /// Returns the number of exact-radius layers.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.layers.len()
+    }
+
+    /// Returns whether no layers are stored.
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.layers.is_empty()
+    }
+
+    /// Increments one bit count in one exact-radius layer.
+    #[inline]
+    pub fn increment(&mut self, radius: usize, index: usize) {
+        if let Some(layer) = self.layers.get_mut(radius) {
+            layer.increment(index);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use alloc::vec;
 
-    use super::CountFingerprint;
+    use super::{CountFingerprint, LayeredCountFingerprint};
 
     #[test]
     fn count_fingerprint_tracks_incremented_counts() {
@@ -91,5 +154,30 @@ mod tests {
         assert_eq!(fingerprint.count(2), 2);
         assert_eq!(fingerprint.count(3), 0);
         assert_eq!(fingerprint.len(), 8);
+    }
+
+    #[test]
+    fn layered_count_fingerprint_tracks_per_radius_counts() {
+        let mut fingerprint = LayeredCountFingerprint::zeros(3, 8);
+        fingerprint.increment(0, 1);
+        fingerprint.increment(2, 5);
+        fingerprint.increment(2, 5);
+
+        assert_eq!(fingerprint.len(), 3);
+        assert_eq!(
+            fingerprint
+                .formula()
+                .active_counts()
+                .collect::<alloc::vec::Vec<_>>(),
+            vec![(1, 1)]
+        );
+        assert_eq!(
+            fingerprint
+                .layer(2)
+                .expect("layer 2 should exist")
+                .active_counts()
+                .collect::<alloc::vec::Vec<_>>(),
+            vec![(5, 2)]
+        );
     }
 }

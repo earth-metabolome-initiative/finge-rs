@@ -2,7 +2,7 @@ use alloc::{vec, vec::Vec};
 
 use crate::{
     bit_fingerprint::BitFingerprint,
-    count_fingerprint::CountFingerprint,
+    count_fingerprint::{CountFingerprint, LayeredCountFingerprint},
     fingerprint::Fingerprint,
     traits::{EcfpGraph, MolecularAtom, MolecularBond},
 };
@@ -26,6 +26,13 @@ pub struct EcfpFingerprint {
 /// presence bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CountEcfpFingerprint(EcfpFingerprint);
+
+/// Dense folded-count ECFP with one exact-count layer per radius.
+///
+/// Layer `0` matches the script-style "formula" counts and layers `1..=R`
+/// match the exact-radius Morgan counts for each requested radius.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayeredCountEcfpFingerprint(EcfpFingerprint);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NeighborInfo {
@@ -77,12 +84,12 @@ impl EcfpFingerprint {
         self.fp_size
     }
 
-    fn emit_hashes<G, F>(&self, graph: &G, mut emit_hash: F)
+    fn emit_hashes_with_layer<G, F>(&self, graph: &G, mut emit_hash: F)
     where
         G: EcfpGraph<NodeId = usize>,
         G::NodeSymbol: MolecularAtom,
         G::Bond: MolecularBond<NodeId = usize>,
-        F: FnMut(u32),
+        F: FnMut(u8, u32),
     {
         let atom_count = graph.atom_count();
         if atom_count == 0 {
@@ -94,7 +101,7 @@ impl EcfpFingerprint {
         for atom_id in 0..atom_count {
             let invariant = graph.ecfp_atom_invariant(atom_id, self.include_ring_membership);
             current_invariants.push(invariant);
-            emit_hash(invariant);
+            emit_hash(0, invariant);
         }
 
         let adjacency = adjacency(graph, self.use_bond_types);
@@ -159,7 +166,7 @@ impl EcfpFingerprint {
                     &mut seen_neighborhoods,
                     &next_atom_neighborhoods[*atom_id],
                 ) {
-                    emit_hash(*invariant);
+                    emit_hash(layer + 1, *invariant);
                 } else {
                     dead_atoms[*atom_id] = true;
                 }
@@ -182,16 +189,31 @@ impl EcfpFingerprint {
         G::Bond: MolecularBond<NodeId = usize>,
         F: FnMut(usize),
     {
+        self.fold_hashes_with_layer(graph, |_, index| emit_folded_index(index));
+    }
+
+    #[inline]
+    fn fold_hashes_with_layer<G, F>(&self, graph: &G, mut emit_folded_index: F)
+    where
+        G: EcfpGraph<NodeId = usize>,
+        G::NodeSymbol: MolecularAtom,
+        G::Bond: MolecularBond<NodeId = usize>,
+        F: FnMut(u8, usize),
+    {
         if self.fp_size == 0 {
             return;
         }
 
         if self.fp_size.is_power_of_two() {
             let mask = self.fp_size - 1;
-            self.emit_hashes(graph, |hash| emit_folded_index(hash as usize & mask));
+            self.emit_hashes_with_layer(graph, |layer, hash| {
+                emit_folded_index(layer, hash as usize & mask)
+            });
         } else {
             let fp_size = self.fp_size;
-            self.emit_hashes(graph, |hash| emit_folded_index(hash as usize % fp_size));
+            self.emit_hashes_with_layer(graph, |layer, hash| {
+                emit_folded_index(layer, hash as usize % fp_size)
+            });
         }
     }
 }
@@ -236,6 +258,46 @@ impl CountEcfpFingerprint {
     }
 }
 
+impl LayeredCountEcfpFingerprint {
+    /// Creates a new exact-radius folded-count fingerprint with the requested
+    /// radius and size.
+    #[inline]
+    #[must_use]
+    pub const fn new(radius: u8, fp_size: usize) -> Self {
+        Self(EcfpFingerprint::new(radius, fp_size))
+    }
+
+    /// Toggles bond-order-sensitive invariants.
+    #[inline]
+    #[must_use]
+    pub const fn with_use_bond_types(mut self, use_bond_types: bool) -> Self {
+        self.0 = self.0.with_use_bond_types(use_bond_types);
+        self
+    }
+
+    /// Toggles ring-membership participation in the initial atom invariants.
+    #[inline]
+    #[must_use]
+    pub const fn with_include_ring_membership(mut self, include_ring_membership: bool) -> Self {
+        self.0 = self.0.with_include_ring_membership(include_ring_membership);
+        self
+    }
+
+    /// Returns the ECFP radius.
+    #[inline]
+    #[must_use]
+    pub const fn radius(self) -> u8 {
+        self.0.radius()
+    }
+
+    /// Returns the folded count-vector length for each layer.
+    #[inline]
+    #[must_use]
+    pub const fn fp_size(self) -> usize {
+        self.0.fp_size()
+    }
+}
+
 impl Default for EcfpFingerprint {
     #[inline]
     fn default() -> Self {
@@ -244,6 +306,13 @@ impl Default for EcfpFingerprint {
 }
 
 impl Default for CountEcfpFingerprint {
+    #[inline]
+    fn default() -> Self {
+        Self(EcfpFingerprint::default())
+    }
+}
+
+impl Default for LayeredCountEcfpFingerprint {
     #[inline]
     fn default() -> Self {
         Self(EcfpFingerprint::default())
@@ -278,6 +347,25 @@ where
         let mut fingerprint = CountFingerprint::zeros(self.fp_size());
         self.0
             .fold_hashes(graph, |index| fingerprint.increment(index));
+
+        fingerprint
+    }
+}
+
+impl<G> Fingerprint<G> for LayeredCountEcfpFingerprint
+where
+    G: EcfpGraph<NodeId = usize>,
+    G::NodeSymbol: MolecularAtom,
+    G::Bond: MolecularBond<NodeId = usize>,
+{
+    type Output = LayeredCountFingerprint;
+
+    fn compute(&self, graph: &G) -> Self::Output {
+        let mut fingerprint =
+            LayeredCountFingerprint::zeros(usize::from(self.radius()) + 1, self.fp_size());
+        self.0.fold_hashes_with_layer(graph, |radius, index| {
+            fingerprint.increment(usize::from(radius), index)
+        });
 
         fingerprint
     }
@@ -438,8 +526,10 @@ mod tests {
     use crate::smiles_support_impl::SmilesRdkitScratch;
     use crate::{
         Fingerprint,
-        fingerprints::{CountEcfpFingerprint, EcfpFingerprint},
-        test_fixtures::rdkit_ecfp_fixture,
+        fingerprints::{CountEcfpFingerprint, EcfpFingerprint, LayeredCountEcfpFingerprint},
+        test_fixtures::{
+            rdkit_counted_ecfp_fixture, rdkit_ecfp_fixture, rdkit_layered_counted_ecfp_fixture,
+        },
     };
 
     fn observed_active_bits(smiles: &str, fingerprint: EcfpFingerprint) -> Vec<usize> {
@@ -459,6 +549,28 @@ mod tests {
         let graph = scratch.prepare(&smiles);
 
         fingerprint.compute(&graph).active_counts().collect()
+    }
+
+    fn observed_layered_active_counts(
+        smiles: &str,
+        fingerprint: LayeredCountEcfpFingerprint,
+        with_explicit_hydrogens: bool,
+    ) -> Vec<Vec<(usize, u32)>> {
+        let parsed: Smiles = smiles.parse().expect("fixture SMILES should parse");
+        let smiles = if with_explicit_hydrogens {
+            parsed.with_explicit_hydrogens()
+        } else {
+            parsed
+        };
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&smiles);
+
+        fingerprint
+            .compute(&graph)
+            .layers()
+            .iter()
+            .map(|layer| layer.active_counts().collect())
+            .collect()
     }
 
     #[test]
@@ -536,6 +648,38 @@ mod tests {
     }
 
     #[test]
+    fn rdkit_layered_counted_ecfp_matches_explicit_hydrogen_reference_fixtures() {
+        let observed_counts =
+            observed_layered_active_counts("CCO", LayeredCountEcfpFingerprint::new(2, 2048), true);
+        assert_eq!(
+            observed_counts,
+            vec![
+                vec![(80, 1), (807, 1), (1057, 1), (1652, 6)],
+                vec![
+                    (91, 3),
+                    (207, 1),
+                    (1008, 1),
+                    (1148, 2),
+                    (1365, 1),
+                    (1839, 1)
+                ],
+                vec![(1042, 1), (1056, 1), (1452, 1)],
+            ]
+        );
+
+        let observed_counts =
+            observed_layered_active_counts("CCCC", LayeredCountEcfpFingerprint::new(2, 2048), true);
+        assert_eq!(
+            observed_counts,
+            vec![
+                vec![(80, 2), (1057, 2), (1652, 10)],
+                vec![(91, 6), (1148, 4), (1839, 2), (1970, 2)],
+                vec![(202, 2), (898, 2)],
+            ]
+        );
+    }
+
+    #[test]
     fn rdkit_ecfp_matrix_matches_reference_corpus() {
         let fixture = rdkit_ecfp_fixture();
         assert_eq!(fixture.molecules.len(), 1_024);
@@ -583,6 +727,73 @@ mod tests {
 
                 assert_eq!(
                     observed_bits, *expected_bits,
+                    "failed for radius={}, fp_size={}, smiles={smiles}",
+                    case.radius, case.fp_size,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rdkit_counted_ecfp_matrix_matches_reference_corpus() {
+        let fixture = rdkit_counted_ecfp_fixture();
+        assert_eq!(fixture.molecules.len(), 1_024);
+        assert_eq!(fixture.cases.len(), 42);
+        assert_eq!(
+            fixture.source.dataset,
+            "scikit-fingerprints HIV test corpus"
+        );
+        assert_eq!(
+            fixture.source.selection,
+            "1024 parseable SMILES fixture in repo order"
+        );
+        assert_eq!(fixture.source.generator, "RDKit MorganGenerator");
+        assert!(!fixture.source.include_chirality);
+        assert!(fixture.source.use_bond_types);
+        assert!(fixture.source.include_ring_membership);
+
+        for case in &fixture.cases {
+            let fingerprint = CountEcfpFingerprint::new(case.radius, case.fp_size);
+            for (smiles, expected_counts) in fixture.molecules.iter().zip(&case.active_counts) {
+                let observed_counts = observed_active_counts(smiles, fingerprint);
+                assert_eq!(
+                    observed_counts, *expected_counts,
+                    "failed for radius={}, fp_size={}, smiles={smiles}",
+                    case.radius, case.fp_size,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rdkit_layered_counted_ecfp_matrix_matches_reference_corpus() {
+        let fixture = rdkit_layered_counted_ecfp_fixture();
+        assert_eq!(fixture.molecules.len(), 1_024);
+        assert_eq!(fixture.cases.len(), 42);
+        assert_eq!(
+            fixture.source.dataset,
+            "scikit-fingerprints HIV test corpus"
+        );
+        assert_eq!(
+            fixture.source.selection,
+            "1024 parseable SMILES fixture in repo order"
+        );
+        assert_eq!(
+            fixture.source.generator,
+            "RDKit MorganGenerator bitInfo exact-radius counts"
+        );
+        assert!(!fixture.source.include_chirality);
+        assert!(fixture.source.use_bond_types);
+        assert!(fixture.source.include_ring_membership);
+
+        for case in &fixture.cases {
+            let fingerprint = LayeredCountEcfpFingerprint::new(case.radius, case.fp_size);
+            for (smiles, expected_counts) in
+                fixture.molecules.iter().zip(&case.layered_active_counts)
+            {
+                let observed_counts = observed_layered_active_counts(smiles, fingerprint, false);
+                assert_eq!(
+                    observed_counts, *expected_counts,
                     "failed for radius={}, fp_size={}, smiles={smiles}",
                     case.radius, case.fp_size,
                 );

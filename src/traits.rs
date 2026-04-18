@@ -108,3 +108,43 @@ where
         (adjacency, atom_codes)
     }
 }
+
+/// Graphs that can provide RDKit-style Topological Torsion atom codes.
+pub trait TopologicalTorsionGraph: MolecularGraph<NodeId = usize>
+where
+    Self::NodeSymbol: MolecularAtom,
+{
+    /// Returns the RDKit-style Topological Torsion atom code for one atom.
+    ///
+    /// `branch_subtract` matches RDKit's `AtomPairs::getAtomCode()` behavior
+    /// for torsions: endpoints subtract `1` and internal atoms subtract `2`.
+    fn topological_torsion_atom_code(&self, atom_id: usize, branch_subtract: u8) -> u32;
+
+    /// Returns the per-atom adjacency lists for path enumeration.
+    #[inline]
+    fn topological_torsion_adjacency(&self) -> Vec<Vec<usize>>
+    where
+        Self::Bond: MolecularBond<NodeId = usize>,
+    {
+        let atom_count = self.atom_count();
+        let mut adjacency = Vec::with_capacity(atom_count);
+
+        for atom_id in 0..atom_count {
+            let neighbors = self
+                .bonds(atom_id)
+                .filter_map(|bond| {
+                    if bond.source() == atom_id {
+                        Some(bond.target())
+                    } else if bond.target() == atom_id {
+                        Some(bond.source())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            adjacency.push(neighbors);
+        }
+
+        adjacency
+    }
+}
