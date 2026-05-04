@@ -15,14 +15,17 @@ Right now the crate provides:
 - folded-count, non-chiral Morgan/ECFP through `CountEcfpFingerprint`
 - exact-radius folded-count Morgan/ECFP through `LayeredCountEcfpFingerprint`
 - bit-only, non-chiral 2D AtomPair through `AtomPairFingerprint`
+- bit-only RDKit topological path fingerprints through `RdkFingerprint`
 - bit-only, non-chiral Topological Torsion through `TopologicalTorsionFingerprint`
+- RDKit MACCS keys through `MaccsFingerprint` behind `smarts-support`
 - optional RDKit-normalized `smiles-parser` integration behind `smiles-support`
 
 Current RDKit parity coverage:
 
 - 1024 `smiles-parser`- and RDKit-parseable SMILES from the tracked scikit-fingerprints HIV fixture corpus
 - bit, folded-count, and exact-radius folded-count ECFP radii `0` through `5`
-- ECFP, AtomPair, and Topological Torsion bit sizes `64`, `128`, `256`, `512`, `1024`, `2048`, and `4096`
+- AtomPair, RDK, and Topological Torsion bit sizes `64`, `128`, `256`, `512`, `1024`, `2048`, and `4096`
+- MACCS default 167-bit keys on the same 1024-molecule corpus under `smarts-support`
 
 ## Usage
 
@@ -38,6 +41,7 @@ and `TopologicalTorsionFingerprint` can also run directly on raw
 use finge_rs::{
     AtomPairFingerprint, CountEcfpFingerprint, EcfpFingerprint, Fingerprint,
     LayeredCountEcfpFingerprint,
+    RdkFingerprint,
     TopologicalTorsionFingerprint,
     smiles_support::SmilesRdkitScratch,
 };
@@ -50,11 +54,13 @@ let atom_pair = AtomPairFingerprint::default().compute(&graph);
 let ecfp = EcfpFingerprint::default().compute(&graph);
 let counted_ecfp = CountEcfpFingerprint::default().compute(&graph);
 let layered_counted_ecfp = LayeredCountEcfpFingerprint::default().compute(&graph);
+let rdk = RdkFingerprint::default().compute(&graph);
 let torsion = TopologicalTorsionFingerprint::default().compute(&graph);
 # let _ = atom_pair;
 # let _ = ecfp;
 # let _ = counted_ecfp;
 # let _ = layered_counted_ecfp;
+# let _ = rdk;
 # let _ = torsion;
 # }
 # #[cfg(not(feature = "smiles-support"))]

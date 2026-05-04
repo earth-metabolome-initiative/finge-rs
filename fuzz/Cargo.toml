@@ -14,7 +14,7 @@ members = ["."]
 arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"
 smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false }
-smarts-validator = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "9e48edae78913bf6d9dfe00ad576baab56cb7d43", package = "smarts-validator", default-features = false }
+smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "3bfec75563afc9fb78bb42231ec47e3bfc736c4f", package = "smarts-rs", default-features = false }
 
 [dependencies.finge-rs]
 path = ".."

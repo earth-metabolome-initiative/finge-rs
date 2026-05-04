@@ -1,7 +1,7 @@
 use core::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use finge_rs::{Fingerprint, TopologicalTorsionFingerprint};
+use finge_rs::{Fingerprint, RdkFingerprint, smiles_support::SmilesRdkitScratch};
 use smiles_parser::smiles::Smiles;
 
 mod common;
@@ -9,18 +9,20 @@ mod common;
 const BENCH_SIZES: &[usize] = &[64, 128, 256, 512, 1024, 2048, 4096];
 
 fn bench_corpus(c: &mut Criterion, corpus: &[Smiles]) {
-    let mut group = c.benchmark_group("topological_torsion_raw_smiles");
+    let mut group = c.benchmark_group("rdk_smiles_with_rdkit_prep");
     common::configure_group(&mut group, corpus.len());
 
     for &fp_size in BENCH_SIZES {
-        let fingerprint = TopologicalTorsionFingerprint::new(fp_size);
+        let fingerprint = RdkFingerprint::new(fp_size);
         group.bench_with_input(
             BenchmarkId::new(format!("n{fp_size}"), corpus.len()),
             &fingerprint,
             |b, fingerprint| {
+                let mut scratch = SmilesRdkitScratch::default();
                 b.iter(|| {
                     for graph in corpus {
-                        black_box(fingerprint.compute(graph));
+                        let prepared = scratch.prepare(graph);
+                        black_box(fingerprint.compute(&prepared));
                     }
                 });
             },
@@ -30,10 +32,10 @@ fn bench_corpus(c: &mut Criterion, corpus: &[Smiles]) {
     group.finish();
 }
 
-fn topological_torsion_benchmarks(c: &mut Criterion) {
+fn rdk_benchmarks(c: &mut Criterion) {
     let raw_corpus = common::load_smiles_corpus();
     bench_corpus(c, &raw_corpus);
 }
 
-criterion_group!(benches, topological_torsion_benchmarks);
+criterion_group!(benches, rdk_benchmarks);
 criterion_main!(benches);

@@ -118,6 +118,7 @@ pub(crate) struct RdkitTopologicalTorsionFixture {
     pub(crate) cases: Vec<RdkitTopologicalTorsionCase>,
 }
 
+#[cfg(feature = "smarts-support")]
 #[derive(Debug, Deserialize)]
 pub(crate) struct RdkitMaccsSource {
     pub(crate) dataset: String,
@@ -125,11 +126,48 @@ pub(crate) struct RdkitMaccsSource {
     pub(crate) generator: String,
 }
 
+#[cfg(feature = "smarts-support")]
 #[derive(Debug, Deserialize)]
 pub(crate) struct RdkitMaccsFixture {
     pub(crate) source: RdkitMaccsSource,
     pub(crate) molecules: Vec<String>,
     pub(crate) active_bits: Vec<Vec<usize>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RdkitRdkSource {
+    pub(crate) dataset: String,
+    pub(crate) selection: String,
+    pub(crate) generator: String,
+    #[serde(rename = "minPath")]
+    pub(crate) min_path: u8,
+    #[serde(rename = "maxPath")]
+    pub(crate) max_path: u8,
+    #[serde(rename = "nBitsPerHash")]
+    pub(crate) n_bits_per_hash: u8,
+    #[serde(rename = "useHs")]
+    pub(crate) use_hs: bool,
+    #[serde(rename = "tgtDensity")]
+    pub(crate) tgt_density: f64,
+    #[serde(rename = "minSize")]
+    pub(crate) min_size: usize,
+    #[serde(rename = "branchedPaths")]
+    pub(crate) branched_paths: bool,
+    #[serde(rename = "useBondOrder")]
+    pub(crate) use_bond_order: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RdkitRdkCase {
+    pub(crate) fp_size: usize,
+    pub(crate) active_bits: Vec<Vec<usize>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RdkitRdkFixture {
+    pub(crate) source: RdkitRdkSource,
+    pub(crate) molecules: Vec<String>,
+    pub(crate) cases: Vec<RdkitRdkCase>,
 }
 
 pub(crate) fn rdkit_ecfp_fixture() -> &'static RdkitEcfpFixture {
@@ -204,6 +242,7 @@ pub(crate) fn rdkit_topological_torsion_fixture() -> &'static RdkitTopologicalTo
     })
 }
 
+#[cfg(feature = "smarts-support")]
 pub(crate) fn rdkit_maccs_fixture() -> &'static RdkitMaccsFixture {
     static FIXTURE: OnceLock<RdkitMaccsFixture> = OnceLock::new();
     FIXTURE.get_or_init(|| {
@@ -214,5 +253,18 @@ pub(crate) fn rdkit_maccs_fixture() -> &'static RdkitMaccsFixture {
             .read_to_string(&mut json)
             .expect("RDKit MACCS reference fixture should decompress");
         serde_json::from_str(&json).expect("RDKit MACCS reference fixture should deserialize")
+    })
+}
+
+pub(crate) fn rdkit_rdk_fixture() -> &'static RdkitRdkFixture {
+    static FIXTURE: OnceLock<RdkitRdkFixture> = OnceLock::new();
+    FIXTURE.get_or_init(|| {
+        let mut decoder =
+            GzDecoder::new(&include_bytes!("../tests/fixtures/rdkit_rdk_reference.json.gz")[..]);
+        let mut json = String::new();
+        decoder
+            .read_to_string(&mut json)
+            .expect("RDKit RDK reference fixture should decompress");
+        serde_json::from_str(&json).expect("RDKit RDK reference fixture should deserialize")
     })
 }

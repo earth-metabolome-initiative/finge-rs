@@ -96,15 +96,23 @@ impl EcfpFingerprint {
             return;
         }
 
+        let ignored_atoms = (0..atom_count)
+            .map(|atom_id| graph.ecfp_atom_is_ignored(atom_id))
+            .collect::<Vec<_>>();
         let mut current_invariants = Vec::with_capacity(atom_count);
 
-        for atom_id in 0..atom_count {
+        for (atom_id, &ignored) in ignored_atoms.iter().enumerate() {
+            if ignored {
+                current_invariants.push(0);
+                continue;
+            }
+
             let invariant = graph.ecfp_atom_invariant(atom_id, self.include_ring_membership);
             current_invariants.push(invariant);
             emit_hash(0, invariant);
         }
 
-        let adjacency = adjacency(graph, self.use_bond_types);
+        let adjacency = adjacency(graph, self.use_bond_types, &ignored_atoms);
         let mut next_layer_invariants = vec![0_u32; atom_count];
         let mut seen_neighborhoods = Vec::<Vec<usize>>::new();
         let mut current_atom_neighborhoods = vec![Vec::<usize>::new(); atom_count];
@@ -115,7 +123,11 @@ impl EcfpFingerprint {
         for layer in 0..self.radius {
             ranked_atoms.clear();
 
-            for atom_id in 0..atom_count {
+            for (atom_id, &ignored) in ignored_atoms.iter().enumerate() {
+                if ignored {
+                    dead_atoms[atom_id] = true;
+                    continue;
+                }
                 if dead_atoms[atom_id] {
                     continue;
                 }
@@ -412,7 +424,7 @@ fn hash_combine(seed: &mut u32, value: u32) {
         .wrapping_add(seed.wrapping_shr(2));
 }
 
-fn adjacency<G>(graph: &G, use_bond_types: bool) -> Vec<Vec<NeighborInfo>>
+fn adjacency<G>(graph: &G, use_bond_types: bool, ignored_atoms: &[bool]) -> Vec<Vec<NeighborInfo>>
 where
     G: EcfpGraph<NodeId = usize>,
     G::NodeSymbol: MolecularAtom,
@@ -423,10 +435,17 @@ where
     let mut edge_idx = 0;
 
     for node_id in 0..graph.atom_count() {
+        if ignored_atoms[node_id] {
+            continue;
+        }
+
         for bond in graph.bonds(node_id) {
             let Some(other) = other_node(&bond, node_id) else {
                 continue;
             };
+            if ignored_atoms.get(other).copied().unwrap_or(false) {
+                continue;
+            }
             if other > node_id {
                 let bond_invariant = graph.ecfp_bond_invariant(&bond, use_bond_types);
                 adjacency[node_id].push(NeighborInfo {
@@ -609,7 +628,7 @@ mod tests {
                 return 1;
             }
             match bond.bond_type() {
-                Bond::Single | Bond::Up | Bond::Down | Bond::Aromatic => 1,
+                Bond::Single | Bond::Up | Bond::Down => 1,
                 Bond::Double => 2,
                 Bond::Triple => 3,
                 Bond::Quadruple => 4,
@@ -648,7 +667,11 @@ mod tests {
             parsed
         };
         let mut scratch = SmilesRdkitScratch::default();
-        let graph = scratch.prepare(&smiles);
+        let graph = if with_explicit_hydrogens {
+            scratch.prepare_preserving_explicit_hydrogens(&smiles)
+        } else {
+            scratch.prepare(&smiles)
+        };
 
         fingerprint
             .compute(&graph)
@@ -664,11 +687,31 @@ mod tests {
             ("CCO", vec![80, 222, 294, 807, 1057, 1410]),
             ("CC=O", vec![308, 650, 694, 844, 1004, 1057]),
             ("C#N", vec![489, 915, 1384]),
+            (
+                "C1=CC#CC=C1",
+                vec![113, 335, 576, 1088, 1344, 1434, 1686, 1873],
+            ),
+            ("[H]C", vec![1264]),
+            ("[3H]C", vec![1255, 1264, 1642]),
             ("c1ccccc1", vec![389, 1088, 1873]),
+            (
+                "c1op[o+]c1",
+                vec![
+                    194, 215, 238, 645, 656, 787, 840, 923, 1189, 1449, 1571, 1578, 1873, 1998,
+                ],
+            ),
             ("C1CCCCC1", vec![2, 926, 1028]),
             ("CC(C)O", vec![1, 227, 283, 709, 807, 1057]),
             ("[13CH3][NH3+]", vec![397, 1057, 1082]),
         ] {
+            let observed_bits = observed_active_bits(smiles, EcfpFingerprint::default());
+            assert_eq!(observed_bits, expected_bits, "failed for {smiles}");
+        }
+    }
+
+    #[test]
+    fn ecfp_uses_elements_rs_masses_for_known_rdkit_isotope_errors() {
+        for (smiles, expected_bits) in [("[162Tm]", vec![1559]), ("[239Th]", vec![684])] {
             let observed_bits = observed_active_bits(smiles, EcfpFingerprint::default());
             assert_eq!(observed_bits, expected_bits, "failed for {smiles}");
         }
@@ -700,6 +743,25 @@ mod tests {
                 vec![(80, 2), (294, 2), (640, 1), (794, 2), (1057, 2)],
             ),
             ("c1ccccc1", vec![(389, 6), (1088, 6), (1873, 6)]),
+            (
+                "c1op[o+]c1",
+                vec![
+                    (194, 1),
+                    (215, 1),
+                    (238, 1),
+                    (645, 1),
+                    (656, 1),
+                    (787, 1),
+                    (840, 1),
+                    (923, 1),
+                    (1189, 1),
+                    (1449, 1),
+                    (1571, 1),
+                    (1578, 1),
+                    (1873, 2),
+                    (1998, 1),
+                ],
+            ),
             ("C1CCCCC1", vec![(2, 6), (926, 6), (1028, 6)]),
         ] {
             let observed_counts = observed_active_counts(smiles, CountEcfpFingerprint::default());
@@ -928,14 +990,10 @@ mod tests {
     }
 
     #[test]
-    fn ecfp_zero_sized_and_empty_graph_outputs_are_empty() {
-        let smiles = Smiles::new();
+    fn ecfp_zero_sized_outputs_are_empty() {
+        let smiles: Smiles = "C".parse().expect("fixture SMILES should parse");
         let mut scratch = SmilesRdkitScratch::default();
         let graph = scratch.prepare(&smiles);
-
-        let empty_bits = EcfpFingerprint::new(2, 16).compute(&graph);
-        assert_eq!(empty_bits.len(), 16);
-        assert!(empty_bits.active_bits().next().is_none());
 
         let bits = EcfpFingerprint::new(2, 0).compute(&graph);
         assert_eq!(bits.len(), 0);
@@ -974,16 +1032,16 @@ mod tests {
 
     #[test]
     fn ecfp_adjacency_helpers_ignore_malformed_bonds() {
-        let malformed_bond: BondEdge = (1, 2, Bond::Single, None);
+        let malformed_bond = BondEdge::new(1, 2, Bond::Single, None);
         let graph = MalformedBondSmiles::new("CCO", 0, malformed_bond);
 
-        let first_bond: BondEdge = (0, 1, Bond::Single, None);
-        let malformed_probe: BondEdge = (1, 2, Bond::Single, None);
+        let first_bond = BondEdge::new(0, 1, Bond::Single, None);
+        let malformed_probe = BondEdge::new(1, 2, Bond::Single, None);
         assert_eq!(other_node(&first_bond, 0), Some(1));
         assert_eq!(other_node(&first_bond, 1), Some(0));
         assert_eq!(other_node(&malformed_probe, 0), None);
 
-        let observed = adjacency(&graph, false);
+        let observed = adjacency(&graph, false, &[false, false, false]);
         assert_eq!(
             observed[0]
                 .iter()

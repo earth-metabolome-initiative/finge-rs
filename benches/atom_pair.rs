@@ -1,40 +1,16 @@
 use core::hint::black_box;
-use std::io::Read;
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use finge_rs::{AtomPairFingerprint, Fingerprint};
-use flate2::read::GzDecoder;
 use smiles_parser::smiles::Smiles;
+
+mod common;
 
 const BENCH_SIZES: &[usize] = &[64, 128, 256, 512, 1024, 2048, 4096];
 
-fn load_raw_corpus() -> Vec<Smiles> {
-    let mut decoder = GzDecoder::new(
-        &include_bytes!("../tests/fixtures/scikit_smallest_1024_parseable_smiles.txt.gz")[..],
-    );
-    let mut smiles = String::new();
-    decoder
-        .read_to_string(&mut smiles)
-        .expect("benchmark fixture corpus should decompress");
-
-    smiles
-        .lines()
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .map(|smiles| {
-            smiles
-                .parse()
-                .expect("benchmark fixture SMILES should parse")
-        })
-        .collect()
-}
-
 fn bench_corpus(c: &mut Criterion, corpus: &[Smiles]) {
     let mut group = c.benchmark_group("atom_pair_raw_smiles");
-    group.sample_size(20);
-    group.measurement_time(core::time::Duration::from_secs(3));
-    group.warm_up_time(core::time::Duration::from_secs(1));
-    group.throughput(Throughput::Elements(corpus.len() as u64));
+    common::configure_group(&mut group, corpus.len());
 
     for &fp_size in BENCH_SIZES {
         let fingerprint = AtomPairFingerprint::new(fp_size);
@@ -55,7 +31,7 @@ fn bench_corpus(c: &mut Criterion, corpus: &[Smiles]) {
 }
 
 fn atom_pair_benchmarks(c: &mut Criterion) {
-    let raw_corpus = load_raw_corpus();
+    let raw_corpus = common::load_smiles_corpus();
     bench_corpus(c, &raw_corpus);
 }
 

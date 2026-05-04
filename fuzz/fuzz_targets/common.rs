@@ -6,7 +6,7 @@ use finge_rs::{
     TopologicalTorsionFingerprint, smiles_support::SmilesRdkitScratch,
 };
 use smiles_parser::smiles::Smiles;
-use smarts_validator::PreparedTarget;
+use smarts_rs::PreparedTarget;
 
 const MAX_INPUT_BYTES: usize = 128;
 

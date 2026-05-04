@@ -268,10 +268,48 @@ mod tests {
     }
 
     #[test]
-    fn rdkit_default_atom_pair_bit_fixtures_match() {
+    fn atom_pair_default_bit_fixtures_match() {
         for (smiles, expected_bits) in [
             ("CCC", vec![1148, 1404, 1405]),
             ("CCCC", vec![880, 1144, 1145, 1336, 1404, 1405]),
+            ("[H]C", vec![]),
+            ("[3H]C", vec![632]),
+            (
+                "O=S(F)(F)(F)F",
+                vec![576, 577, 578, 788, 789, 790, 1784, 1868, 1869, 1870],
+            ),
+            (
+                "CS(=O)(O)(O)O",
+                vec![424, 536, 537, 780, 781, 812, 813, 1784, 1884, 1916, 1917],
+            ),
+            ("O=[Os+2]=O", vec![524, 525, 2028]),
+            ("[Fe](#[As])#[As]", vec![696, 1232, 1233]),
+            ("[Mn]=[AsH3]", vec![1048]),
+            ("O=[Co]", vec![712]),
+            ("O=[Fe]", vec![712]),
+            ("S=[Fe]", vec![424]),
+            ("[Co]=[Co]", vec![1992]),
+            ("C=[Fe]", vec![760]),
+            ("C(=O)=[Fe]", vec![460, 1272, 1752]),
+            ("C=[Fe+]", vec![664]),
+            ("C(=O)=[Fe+]", vec![492, 1240, 1752]),
+            ("[As]#[Dy]", vec![1276]),
+            ("[As]#[Gd]", vec![1212]),
+            ("O[Gd]=O", vec![716, 780, 1580]),
+            (
+                "CN=P(=O)O",
+                vec![128, 129, 468, 624, 625, 812, 896, 897, 1244, 1516],
+            ),
+            (
+                "CC=P(=O)C",
+                vec![100, 468, 624, 880, 896, 1112, 1336, 1372, 1744, 1916],
+            ),
+            (
+                "C1CC=P(=O)C1",
+                vec![
+                    100, 148, 896, 1052, 1053, 1076, 1077, 1084, 1304, 1336, 1337, 1338, 1936, 1937,
+                ],
+            ),
         ] {
             let observed = observed_active_bits(smiles, AtomPairFingerprint::default());
             assert_eq!(observed, expected_bits, "failed for {smiles}");

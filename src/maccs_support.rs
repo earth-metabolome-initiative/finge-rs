@@ -1,8 +1,7 @@
 use alloc::{boxed::Box, vec};
 use core::fmt;
 
-use smarts_parser::QueryMol;
-use smarts_validator::{CompiledQuery, PreparedTarget, SmartsMatchError};
+use smarts_rs::{CompiledQuery, PreparedTarget, QueryMol, SmartsMatchError};
 
 /// RDKit MACCS fingerprints use 167 bits with bit 0 left unused.
 pub const MACCS_KEY_COUNT: usize = 167;
@@ -67,7 +66,7 @@ pub enum MaccsBuildError {
     /// One hard-coded SMARTS pattern failed to parse.
     Parse {
         key_id: u16,
-        source: smarts_parser::SmartsParseError,
+        source: smarts_rs::SmartsParseError,
     },
     /// One parsed SMARTS pattern used validator features not yet supported by
     /// `smarts-validator`.
@@ -183,7 +182,7 @@ pub fn has_multiple_fragments(target: &PreparedTarget) -> bool {
 }
 
 fn is_aromatic_bond(target: &PreparedTarget, left_atom: usize, right_atom: usize) -> bool {
-    target.bond(left_atom, right_atom) == Some(smarts_validator::BondLabel::Aromatic)
+    target.is_aromatic_bond(left_atom, right_atom)
 }
 
 const RDKIT_MACCS_KEY_DATA: [(u16, &str, u8); 166] = [
@@ -377,7 +376,7 @@ const RDKIT_MACCS_KEY_DATA: [(u16, &str, u8); 166] = [
 
 #[cfg(test)]
 mod tests {
-    use smarts_validator::PreparedTarget;
+    use smarts_rs::{BondLabel, PreparedTarget};
     use smiles_parser::smiles::Smiles;
 
     use super::{
@@ -445,6 +444,18 @@ mod tests {
 
         assert!(!has_multiple_aromatic_rings(&benzene));
         assert!(has_multiple_aromatic_rings(&naphthalene));
+    }
+
+    #[test]
+    fn aromatic_ring_special_case_counts_rdkit_aromatic_triple_bond_rings() {
+        let target = PreparedTarget::new("C1=CC2=CC#CC=C2C=C1".parse::<Smiles>().unwrap());
+
+        assert!(
+            target.is_aromatic_bond(4, 5),
+            "smarts-rs exposes RDKit-style aromaticity independently from the effective bond label"
+        );
+        assert_eq!(target.bond(4, 5), Some(BondLabel::Triple));
+        assert!(has_multiple_aromatic_rings(&target));
     }
 
     #[test]

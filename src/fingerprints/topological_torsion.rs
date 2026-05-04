@@ -108,10 +108,6 @@ where
             self.torsion_atom_count <= MAX_TORSION_ATOM_COUNT,
             "TopologicalTorsionFingerprint supports torsion_atom_count <= 7 in non-chiral mode, matching RDKit's 64-bit sparse ids"
         );
-        if graph.atom_count() < usize::from(self.torsion_atom_count) {
-            return fingerprint;
-        }
-
         let (adjacency, edge_count) = topological_torsion_edge_adjacency(graph);
         let endpoint_codes = (0..graph.atom_count())
             .map(|atom_id| graph.topological_torsion_atom_code(atom_id, 1))
@@ -208,6 +204,10 @@ where
     let mut next_edge_id = 0_usize;
 
     for (atom_id, neighbors) in adjacency.iter_mut().enumerate() {
+        if graph.topological_torsion_atom_is_hydrogen(atom_id) {
+            continue;
+        }
+
         for bond in graph.bonds(atom_id) {
             let (source, target) = (bond.source(), bond.target());
             let Some(neighbor) = (if source == atom_id {
@@ -219,6 +219,9 @@ where
             }) else {
                 continue;
             };
+            if graph.topological_torsion_atom_is_hydrogen(neighbor) {
+                continue;
+            }
 
             let key = if source <= target {
                 (source, target)
@@ -579,7 +582,37 @@ mod tests {
 
     #[test]
     fn rdkit_default_topological_torsion_bit_fixtures_match() {
-        for (smiles, expected_bits) in [("CCCCC", vec![0, 1]), ("C1CCC1", vec![284, 285, 286])] {
+        for (smiles, expected_bits) in [
+            ("CCCCC", vec![0, 1]),
+            ("C1CCC1", vec![284, 285, 286]),
+            ("C1CC1", vec![284]),
+            ("C1CO1", vec![1116]),
+            ("C1CN1", vec![508]),
+            ("BC(=O)NCC", vec![308, 452, 912]),
+            ("[BH3-]NCCN[BH3-]", vec![168, 169, 1940]),
+            ("BN1C=CC=N1", vec![140, 176, 576, 736, 1236, 1436, 1680]),
+            ("C=CC=[Fe]", vec![1460]),
+            ("CCOC=[Fe]", vec![288, 872]),
+            ("C=C=C=[Rh]", vec![312]),
+            ("O=[Sm]O[Sm]=O", vec![612, 613]),
+            ("O=[Eu]O[Eu]=O", vec![1652, 1653]),
+        ] {
+            let observed = observed_active_bits(smiles, TopologicalTorsionFingerprint::default());
+            assert_eq!(observed, expected_bits, "failed for {smiles}");
+        }
+    }
+
+    #[test]
+    fn rdkit_default_topological_torsion_ignores_explicit_hydrogen_paths() {
+        for (smiles, expected_bits) in [
+            ("[2H]OCCCC", vec![0, 28]),
+            ("[H]C(C)(C)CC", vec![824, 825]),
+            (
+                "[2H]C([2H])([2H])C(C([2H])([2H])[2H])(C([2H])([2H])[2H])Cl",
+                vec![],
+            ),
+            ("[2H]C([2H])([2H])O[2H]", vec![]),
+        ] {
             let observed = observed_active_bits(smiles, TopologicalTorsionFingerprint::default());
             assert_eq!(observed, expected_bits, "failed for {smiles}");
         }
@@ -761,7 +794,7 @@ mod tests {
 
     #[test]
     fn topological_torsion_edge_adjacency_ignores_malformed_bonds() {
-        let malformed_bond: BondEdge = (1, 2, Bond::Single, None);
+        let malformed_bond = BondEdge::new(1, 2, Bond::Single, None);
         let graph = MalformedBondSmiles::new("CCO", 0, malformed_bond);
         let (mut adjacency, edge_count) = topological_torsion_edge_adjacency(&graph);
         for neighbors in &mut adjacency {

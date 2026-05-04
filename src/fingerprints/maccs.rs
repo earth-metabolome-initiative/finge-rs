@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
 
-use smarts_validator::{PreparedTarget, match_count_compiled, matches_compiled};
+use smarts_rs::{CompiledQuery, PreparedTarget};
 
 use crate::{
     bit_fingerprint::BitFingerprint,
@@ -15,7 +15,7 @@ use crate::{
 /// RDKit-style MACCS fingerprint built on top of `smarts-rs`.
 #[derive(Debug, Clone)]
 pub struct MaccsFingerprint {
-    compiled_queries: Box<[Option<smarts_validator::CompiledQuery>]>,
+    compiled_queries: Box<[Option<CompiledQuery>]>,
 }
 
 impl MaccsFingerprint {
@@ -38,9 +38,9 @@ impl MaccsFingerprint {
                     .as_ref()
                     .expect("SMARTS-backed MACCS keys should compile");
                 if key.count_threshold == 0 {
-                    matches_compiled(compiled_query, target)
+                    compiled_query.matches(target)
                 } else {
-                    match_count_compiled(compiled_query, target) > usize::from(key.count_threshold)
+                    compiled_query.match_count(target) > usize::from(key.count_threshold)
                 }
             }
         }
@@ -67,11 +67,13 @@ impl Fingerprint<PreparedTarget> for MaccsFingerprint {
 mod tests {
     use alloc::vec::Vec;
 
-    use smarts_validator::PreparedTarget;
-    use smiles_parser::smiles::Smiles;
+    use smarts_rs::{CompiledQuery, PreparedTarget, QueryMol};
+    use smiles_parser::{bond::Bond, smiles::Smiles};
 
     use super::MaccsFingerprint;
     use crate::{Fingerprint, test_fixtures::rdkit_maccs_fixture};
+
+    const FIRST_RANDOM_1M_COUNTEREXAMPLE: &str = "CC[C@@H]1[C@@H](N1)C(=O)N(C)CC(=O)N(C)C(=C(C)C)C(=O)N[C@H]2CC3=CC(=CC(=C3)O)C4=CC5=C(C=C4)N(C(=C5CC(COC(=O)[C@@H]6CCCN(C2=O)N6)(C)C)C7=C(N=CC#C7)[C@H](C)OC)CC";
 
     fn prepare_target(smiles: &str) -> PreparedTarget {
         PreparedTarget::new(smiles.parse::<Smiles>().unwrap())
@@ -112,5 +114,87 @@ mod tests {
                 "MACCS mismatch for {smiles}"
             );
         }
+    }
+
+    #[test]
+    fn maccs_key_17_is_set_for_simple_alkyne() {
+        let target = prepare_target("CC#C");
+        let fingerprint = MaccsFingerprint::new().expect("MACCS SMARTS should compile");
+        let observed_active_bits = fingerprint
+            .compute(&target)
+            .active_bits()
+            .collect::<Vec<_>>();
+
+        assert!(observed_active_bits.contains(&17));
+    }
+
+    #[test]
+    fn first_random_1m_counterexample_still_contains_a_carbon_carbon_triple_bond() {
+        let smiles: Smiles = FIRST_RANDOM_1M_COUNTEREXAMPLE.parse().unwrap();
+
+        let mut triple_cc_bonds = Vec::new();
+        let mut atom_id = 0usize;
+        while smiles.node_by_id(atom_id).is_some() {
+            for edge in smiles.edges_for_node(atom_id) {
+                let source = edge.source();
+                let target = edge.target();
+                if source >= target {
+                    continue;
+                }
+                if edge.bond() == Bond::Triple
+                    && smiles.node_by_id(source).and_then(|atom| atom.element())
+                        == Some(elements_rs::Element::C)
+                    && smiles.node_by_id(target).and_then(|atom| atom.element())
+                        == Some(elements_rs::Element::C)
+                {
+                    triple_cc_bonds.push([source, target]);
+                }
+            }
+            atom_id += 1;
+        }
+
+        assert_eq!(triple_cc_bonds, alloc::vec![[59, 60]]);
+    }
+
+    #[test]
+    fn carbon_carbon_triple_bond_smarts_matches_first_random_1m_counterexample() {
+        let target = prepare_target(FIRST_RANDOM_1M_COUNTEREXAMPLE);
+        let query = "[#6]#[#6]".parse::<QueryMol>().unwrap();
+        let compiled = CompiledQuery::new(query).unwrap();
+
+        assert!(
+            compiled.matches(&target),
+            "prepared SMARTS matching should find the C#C bond in the counterexample"
+        );
+    }
+
+    #[test]
+    fn maccs_key_17_is_set_for_first_random_1m_counterexample() {
+        let target = prepare_target(FIRST_RANDOM_1M_COUNTEREXAMPLE);
+        let fingerprint = MaccsFingerprint::new().expect("MACCS SMARTS should compile");
+        let observed_active_bits = fingerprint
+            .compute(&target)
+            .active_bits()
+            .collect::<Vec<_>>();
+
+        assert!(
+            observed_active_bits.contains(&17),
+            "MACCS key 17 ([#6]#[#6]) should be set for the counterexample, observed={observed_active_bits:?}"
+        );
+    }
+
+    #[test]
+    fn maccs_key_125_is_set_for_rdkit_aromatic_triple_bond_fused_ring() {
+        let target = prepare_target("C1=CC2=CC#CC=C2C=C1");
+        let fingerprint = MaccsFingerprint::new().expect("MACCS SMARTS should compile");
+        let observed_active_bits = fingerprint
+            .compute(&target)
+            .active_bits()
+            .collect::<Vec<_>>();
+
+        assert!(
+            observed_active_bits.contains(&125),
+            "MACCS key 125 should be set for two RDKit-aromatic rings, observed={observed_active_bits:?}"
+        );
     }
 }

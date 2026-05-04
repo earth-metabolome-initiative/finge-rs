@@ -30,11 +30,11 @@ pub use crate::{
     fingerprint::Fingerprint,
     fingerprints::{
         AtomPairFingerprint, CountEcfpFingerprint, EcfpFingerprint, LayeredCountEcfpFingerprint,
-        TopologicalTorsionFingerprint,
+        RdkFingerprint, TopologicalTorsionFingerprint,
     },
     traits::{
         AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph,
-        TopologicalTorsionGraph,
+        RdkFingerprintGraph, TopologicalTorsionGraph,
     },
 };
 
@@ -45,8 +45,8 @@ pub mod prelude {
     pub use crate::{
         AtomPairFingerprint, AtomPairGraph, BitFingerprint, CountEcfpFingerprint, CountFingerprint,
         EcfpFingerprint, EcfpGraph, Fingerprint, LayeredCountEcfpFingerprint,
-        LayeredCountFingerprint, MolecularAtom, MolecularBond, MolecularGraph,
-        TopologicalTorsionFingerprint, TopologicalTorsionGraph,
+        LayeredCountFingerprint, MolecularAtom, MolecularBond, MolecularGraph, RdkFingerprint,
+        RdkFingerprintGraph, TopologicalTorsionFingerprint, TopologicalTorsionGraph,
     };
     #[cfg(feature = "smiles-support")]
     pub use crate::{

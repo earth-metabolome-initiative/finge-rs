@@ -37,9 +37,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.60"
+version = "1.2.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43c5703da9466b66a946814e1adf53ea2c90f10063b86290cc9eb67ce3478a20"
+checksum = "d16d90359e986641506914ba71350897565610e87ce0ad9e6f28569db3dd5c6d"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -66,9 +66,9 @@ dependencies = [
 
 [[package]]
 name = "elements_rs"
-version = "0.2.3"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31d19502a92c5b52707f78efd0ceaf92a75171a8661d55ab5bfa01f6383c8d8d"
+checksum = "4bd188e809697c6ab48177f32792f1d29f41451e7956336b0ba939adfde120aa"
 dependencies = [
  "serde",
  "strum",
@@ -101,8 +101,7 @@ dependencies = [
  "bitvec",
  "elements_rs",
  "geometric-traits",
- "smarts-parser",
- "smarts-validator",
+ "smarts-rs",
  "smiles-parser",
 ]
 
@@ -113,7 +112,7 @@ dependencies = [
  "arbitrary",
  "finge-rs",
  "libfuzzer-sys",
- "smarts-validator",
+ "smarts-rs",
  "smiles-parser",
 ]
 
@@ -132,7 +131,7 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 [[package]]
 name = "geometric-traits"
 version = "0.1.0"
-source = "git+https://github.com/earth-metabolome-initiative/geometric-traits?branch=main#eec1488c592e8299a30096208ed9c439a1dd40de"
+source = "git+https://github.com/earth-metabolome-initiative/geometric-traits?branch=main#6f1bc412e34c3e698877bab976124041f8043b75"
 dependencies = [
  "bitvec",
  "hashbrown",
@@ -195,9 +194,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.185"
+version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ff2c0fe9bc6cb6b14a0592c2ff4fa9ceb83eea9db979b0487cd054946a2b8f"
+checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libfuzzer-sys"
@@ -207,6 +206,17 @@ checksum = "f12a681b7dd8ce12bff52488013ba614b869148d54dd79836ab85aafdd53f08d"
 dependencies = [
  "arbitrary",
  "cc",
+]
+
+[[package]]
+name = "molecular-formulas"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b39d1aee826891c888ec259896b77b21a08da2fc9961b618461c712fb1ed5c3e"
+dependencies = [
+ "elements_rs",
+ "num-traits",
+ "thiserror",
 ]
 
 [[package]]
@@ -323,23 +333,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
-name = "smarts-parser"
+name = "smarts-rs"
 version = "0.1.0"
-source = "git+https://github.com/earth-metabolome-initiative/smarts-rs?rev=9e48edae78913bf6d9dfe00ad576baab56cb7d43#9e48edae78913bf6d9dfe00ad576baab56cb7d43"
-dependencies = [
- "elements_rs",
- "smiles-parser",
- "thiserror",
-]
-
-[[package]]
-name = "smarts-validator"
-version = "0.1.0"
-source = "git+https://github.com/earth-metabolome-initiative/smarts-rs?rev=9e48edae78913bf6d9dfe00ad576baab56cb7d43#9e48edae78913bf6d9dfe00ad576baab56cb7d43"
+source = "git+https://github.com/earth-metabolome-initiative/smarts-rs?rev=3bfec75563afc9fb78bb42231ec47e3bfc736c4f#3bfec75563afc9fb78bb42231ec47e3bfc736c4f"
 dependencies = [
  "elements_rs",
  "geometric-traits",
- "smarts-parser",
  "smiles-parser",
  "thiserror",
 ]
@@ -347,11 +346,12 @@ dependencies = [
 [[package]]
 name = "smiles-parser"
 version = "0.1.0"
-source = "git+https://github.com/earth-metabolome-initiative/smiles-parser?branch=main#7ff01a959320ab1caba5149165dc03a210c3d755"
+source = "git+https://github.com/earth-metabolome-initiative/smiles-parser?branch=main#62819218e2785bab428d8ce019cb0638e97ebb8e"
 dependencies = [
  "elements_rs",
  "geometric-traits",
  "hashbrown",
+ "molecular-formulas",
  "smallvec",
  "thiserror",
 ]
