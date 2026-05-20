@@ -570,6 +570,84 @@ mod tests {
     }
 
     #[test]
+    fn wrapper_delegates_atom_pair_topological_torsion_and_rdk() {
+        use crate::{AtomPairFingerprint, RdkFingerprint, TopologicalTorsionFingerprint};
+        let (mut scratch, parsed) = prepared("c1ccccc1O");
+        let inner = scratch.prepare(&parsed);
+
+        // AtomPair
+        let direct_ap = AtomPairFingerprint::new(2048).compute(&inner);
+        let wrapped_ap = AtomPairFingerprint::new(2048).compute(&InvalidatedGraph::new(inner));
+        assert_eq!(
+            direct_ap.active_bits().collect::<Vec<_>>(),
+            wrapped_ap.active_bits().collect::<Vec<_>>(),
+        );
+
+        // Topological Torsion
+        let direct_tt = TopologicalTorsionFingerprint::new(2048).compute(&inner);
+        let wrapped_tt =
+            TopologicalTorsionFingerprint::new(2048).compute(&InvalidatedGraph::new(inner));
+        assert_eq!(
+            direct_tt.active_bits().collect::<Vec<_>>(),
+            wrapped_tt.active_bits().collect::<Vec<_>>(),
+        );
+
+        // RDKFingerprint
+        let direct_rdk = RdkFingerprint::new(2048).compute(&inner);
+        let wrapped_rdk = RdkFingerprint::new(2048).compute(&InvalidatedGraph::new(inner));
+        assert_eq!(
+            direct_rdk.active_bits().collect::<Vec<_>>(),
+            wrapped_rdk.active_bits().collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn inner_and_into_inner_round_trip() {
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+        let wrapper = InvalidatedGraph::new(inner);
+        assert_eq!(wrapper.inner().atom_count(), 3);
+        let recovered = wrapper.into_inner();
+        assert_eq!(recovered.atom_count(), 3);
+    }
+
+    #[test]
+    fn atom_field_override_exposes_active_record() {
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+        let mut wrapper = InvalidatedGraph::new(inner);
+        assert!(wrapper.atom_field_override(0).is_none());
+
+        wrapper.set_atomic_number_override(0, 200);
+        wrapper.set_formal_charge_override(0, -5);
+        let ov = wrapper
+            .atom_field_override(0)
+            .expect("override should be present after two set_* calls");
+        assert!(ov.is_active());
+        assert_eq!(ov.atomic_number, Some(200));
+        assert_eq!(ov.formal_charge, Some(-5));
+        assert!(ov.total_degree.is_none());
+        assert!(ov.total_hydrogens.is_none());
+        assert!(ov.delta_mass.is_none());
+        assert!(ov.in_ring.is_none());
+
+        // The empty default override must report inactive.
+        assert!(!AtomFieldOverride::default().is_active());
+    }
+
+    #[test]
+    fn ecfp_atom_is_ignored_override_takes_precedence() {
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+        let mut wrapper = InvalidatedGraph::new(inner);
+        // Force atom 0 to be reported as ignored.
+        wrapper.set_atom_is_ignored_override(0, true);
+        assert!(wrapper.ecfp_atom_is_ignored(0));
+        // Atoms outside the override table fall back to the inner.
+        assert!(!wrapper.ecfp_atom_is_ignored(1));
+    }
+
+    #[test]
     fn atom_field_override_apply_replaces_only_specified_channels() {
         let base = AtomInvariantFields {
             atomic_number: 6,

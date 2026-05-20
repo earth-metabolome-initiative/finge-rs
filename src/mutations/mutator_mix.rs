@@ -363,4 +363,34 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn default_constructs_empty_mix() {
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::default();
+        assert_eq!(mix.mutator_count(), 0);
+        assert_eq!(mix.predicate_count(), 0);
+    }
+
+    #[test]
+    fn pick_mutator_index_falls_back_when_all_weights_zero() {
+        // Both mutators registered with weight 0.0 — the cumulative-sum
+        // path is unreachable (total == 0.0), so `pick_mutator_index`
+        // takes the uniform-fallback branch. The atomic-number mutator
+        // always succeeds on CCO, so a successful sample proves the
+        // fallback path was taken.
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::new()
+            .add_mutator(
+                alloc::boxed::Box::new(crate::ImpossibleAtomicNumberMutator),
+                0.0,
+            )
+            .add_mutator(alloc::boxed::Box::new(crate::HypervalentMutator), 0.0);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xA5A5);
+        let result = mix.sample(inner, &mut rng);
+        assert!(
+            result.is_ok(),
+            "all-zero-weight fallback must still pick a mutator: {result:?}",
+        );
+    }
 }

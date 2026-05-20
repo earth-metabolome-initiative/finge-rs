@@ -64,3 +64,30 @@ impl core::fmt::Display for MutatorError {
 }
 
 impl core::error::Error for MutatorError {}
+
+#[cfg(test)]
+mod tests {
+    use alloc::string::ToString;
+
+    use super::MutatorError;
+
+    #[test]
+    fn display_covers_every_error_variant() {
+        assert_eq!(
+            MutatorError::NoEligibleAtom.to_string(),
+            "no eligible atom for mutation",
+        );
+        assert_eq!(
+            MutatorError::NoEligibleBond.to_string(),
+            "no eligible bond for mutation",
+        );
+        assert_eq!(
+            MutatorError::AlreadyViolated.to_string(),
+            "input already exhibits the target violation",
+        );
+        assert_eq!(
+            MutatorError::GraphTooSmall.to_string(),
+            "graph too small for this mutator",
+        );
+    }
+}

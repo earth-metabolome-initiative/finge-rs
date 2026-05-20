@@ -197,4 +197,33 @@ mod tests {
         };
         assert_ne!(neg.to_invariant(true), pos.to_invariant(true));
     }
+
+    #[test]
+    fn to_invariant_covers_both_in_ring_branches() {
+        // Belt-and-braces: tarpaulin's branch instrumentation sometimes
+        // misses one of the two `to_invariant` arms when
+        // `morgan_hash_u32_sequence` is inlined. Call each arm explicitly.
+        let on_ring = AtomInvariantFields {
+            atomic_number: 6,
+            total_degree: 3,
+            total_hydrogens: 1,
+            formal_charge: 0,
+            delta_mass: 0,
+            in_ring: true,
+        };
+        let off_ring = AtomInvariantFields {
+            in_ring: false,
+            ..on_ring
+        };
+        // `include_ring_membership = true` + `in_ring = true` → the 6-element
+        // hash branch (with the trailing `1`).
+        let with_ring = on_ring.to_invariant(true);
+        // `include_ring_membership = true` + `in_ring = false` → the
+        // 5-element hash branch.
+        let without_ring = off_ring.to_invariant(true);
+        assert_ne!(with_ring, without_ring);
+        // `include_ring_membership = false` always takes the 5-element
+        // branch regardless of `in_ring`.
+        assert_eq!(on_ring.to_invariant(false), off_ring.to_invariant(false));
+    }
 }

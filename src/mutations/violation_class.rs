@@ -250,4 +250,25 @@ mod tests {
         label.set(ViolationClass::ImpossibleBondType);
         assert_eq!(label.as_u8(), 0b0100_0001);
     }
+
+    #[test]
+    fn label_set_clear_is_idempotent_on_repeated_calls() {
+        let mut label = ViolationLabel::empty();
+        label.set(ViolationClass::ImpossibleCharge);
+        let after_first = label;
+        label.set(ViolationClass::ImpossibleCharge);
+        assert_eq!(label, after_first, "second set must be a no-op");
+
+        label.clear(ViolationClass::ImpossibleCharge);
+        let after_clear = label;
+        label.clear(ViolationClass::ImpossibleCharge);
+        assert_eq!(label, after_clear, "second clear must be a no-op");
+        assert!(label.is_empty());
+    }
+
+    #[test]
+    fn all_label_iter_yields_every_class_in_declaration_order() {
+        let collected: Vec<ViolationClass> = ViolationLabel::all().iter().collect();
+        assert_eq!(collected, ViolationClass::ALL.to_vec());
+    }
 }

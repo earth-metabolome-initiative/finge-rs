@@ -671,6 +671,39 @@ mod tests {
     }
 
     #[test]
+    fn predicate_class_returns_matching_violation_class() {
+        use crate::PredicateClass;
+        // ImpossibleAtomicNumberPredicate is already covered by
+        // `impossible_atomic_number_predicate_class_and_fires`; the other
+        // seven `class()` one-liners were dead in coverage until this test.
+        assert_eq!(HypervalentPredicate.class(), ViolationClass::Hypervalent);
+        assert_eq!(
+            ImpossibleHCountPredicate.class(),
+            ViolationClass::ImpossibleHCount,
+        );
+        assert_eq!(
+            ImpossibleChargePredicate.class(),
+            ViolationClass::ImpossibleCharge,
+        );
+        assert_eq!(
+            ImpossibleIsotopePredicate.class(),
+            ViolationClass::ImpossibleIsotope,
+        );
+        assert_eq!(
+            ImpossibleRingFlagPredicate.class(),
+            ViolationClass::ImpossibleRingFlag,
+        );
+        assert_eq!(
+            ImpossibleBondTypePredicate.class(),
+            ViolationClass::ImpossibleBondType,
+        );
+        assert_eq!(
+            TopologicalPathologyPredicate.class(),
+            ViolationClass::TopologicalPathology,
+        );
+    }
+
+    #[test]
     fn impossible_ring_flag_handles_atom_count_correctly() {
         // Verify the heavy_bond_count helper isn't tripped by hydrogens.
         let (mut scratch, parsed) = parse("CCO");
