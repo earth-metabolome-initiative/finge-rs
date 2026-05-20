@@ -13,8 +13,9 @@ members = ["."]
 [dependencies]
 arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"
+rand_chacha = { version = "0.3", default-features = false }
 smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false }
-smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "3bfec75563afc9fb78bb42231ec47e3bfc736c4f", package = "smarts-rs", default-features = false }
+smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "4545f4702115c0a92df2b2761545faf9b0a8191b", package = "smarts-rs", default-features = false }
 
 [dependencies.finge-rs]
 path = ".."
@@ -44,6 +45,62 @@ bench = false
 [[bin]]
 name = "maccs"
 path = "fuzz_targets/maccs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mutator_atomic_number"
+path = "fuzz_targets/mutator_atomic_number.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mutator_hypervalent"
+path = "fuzz_targets/mutator_hypervalent.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mutator_h_count"
+path = "fuzz_targets/mutator_h_count.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mutator_formal_charge"
+path = "fuzz_targets/mutator_formal_charge.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mutator_isotope"
+path = "fuzz_targets/mutator_isotope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mutator_ring_flag"
+path = "fuzz_targets/mutator_ring_flag.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mutator_bond_type"
+path = "fuzz_targets/mutator_bond_type.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mutator_topology"
+path = "fuzz_targets/mutator_topology.rs"
 test = false
 doc = false
 bench = false

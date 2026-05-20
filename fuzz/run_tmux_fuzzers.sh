@@ -2,12 +2,16 @@
 set -euo pipefail
 
 SESSION_NAME="finge-fuzz"
-REPLACE_SESSION="${FUZZ_REPLACE_SESSION:-0}"
+ATTACH="${FUZZ_ATTACH:-1}"
 
 while (($#)); do
   case "$1" in
     --replace)
-      REPLACE_SESSION=1
+      # Kept for backwards compatibility — replacement is now the default.
+      shift
+      ;;
+    --no-attach)
+      ATTACH=0
       shift
       ;;
     *)
@@ -41,23 +45,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMMON_ARGS="${FUZZ_RUN_ARGS:-}"
 
 if tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
-  if [[ "${REPLACE_SESSION}" == "1" ]]; then
-    tmux kill-session -t "${SESSION_NAME}"
-  else
-    pane_states="$(tmux list-panes -t "${SESSION_NAME}" -F '#{pane_dead}' 2>/dev/null || true)"
-    if [[ -n "${pane_states}" ]] && ! grep -q '^0$' <<<"${pane_states}"; then
-      echo "replacing stale tmux session '${SESSION_NAME}' with only dead panes" >&2
-      tmux kill-session -t "${SESSION_NAME}"
-    else
-      echo "tmux session '${SESSION_NAME}' already exists" >&2
-      echo "Attach with: tmux attach -t ${SESSION_NAME}" >&2
-      echo "Or replace it with: ${BASH_SOURCE[0]} --replace ${SESSION_NAME}" >&2
-      exit 1
-    fi
-  fi
+  echo "killing existing tmux session '${SESSION_NAME}'" >&2
+  tmux kill-session -t "${SESSION_NAME}"
 fi
 
-tmux new-session -d -s "${SESSION_NAME}" -c "${REPO_ROOT}" \
+# Window 0: the four fingerprint-family fuzzers (one tile per family).
+tmux new-session -d -s "${SESSION_NAME}" -n "fingerprints" -c "${REPO_ROOT}" \
   "bash -lc 'cargo fuzz run ecfp ${COMMON_ARGS}'"
 
 tmux split-window -t "${SESSION_NAME}:0" -h -c "${REPO_ROOT}" \
@@ -70,19 +63,54 @@ tmux split-window -t "${SESSION_NAME}:0.1" -v -c "${REPO_ROOT}" \
   "bash -lc 'cargo fuzz run maccs ${COMMON_ARGS}'"
 
 tmux select-layout -t "${SESSION_NAME}:0" tiled
+
+# Window 1: the eight per-mutator invariance fuzzers (one tile per mutator).
+tmux new-window -t "${SESSION_NAME}" -n "mutators" -c "${REPO_ROOT}" \
+  "bash -lc 'cargo fuzz run mutator_atomic_number ${COMMON_ARGS}'"
+
+for target in mutator_hypervalent mutator_h_count mutator_formal_charge \
+              mutator_isotope mutator_ring_flag mutator_bond_type mutator_topology; do
+  tmux split-window -t "${SESSION_NAME}:1" -c "${REPO_ROOT}" \
+    "bash -lc 'cargo fuzz run ${target} ${COMMON_ARGS}'"
+  tmux select-layout -t "${SESSION_NAME}:1" tiled
+done
+
+tmux select-window -t "${SESSION_NAME}:0"
 tmux set-option -t "${SESSION_NAME}" remain-on-exit on
 
 cat <<EOF
-Started tmux session '${SESSION_NAME}' with 4 fuzzers:
-  - ecfp
-  - atom_pair
-  - topological_torsion
-  - maccs
+Started tmux session '${SESSION_NAME}' with two windows:
+  window 0 'fingerprints' (4 panes):
+    - ecfp
+    - atom_pair
+    - topological_torsion
+    - maccs
+  window 1 'mutators' (8 panes):
+    - mutator_atomic_number
+    - mutator_hypervalent
+    - mutator_h_count
+    - mutator_formal_charge
+    - mutator_isotope
+    - mutator_ring_flag
+    - mutator_bond_type
+    - mutator_topology
 
-Attach with:
+Re-attach later with:
   tmux attach -t ${SESSION_NAME}
+
+Switch windows: prefix + n (next) / prefix + p (prev) / prefix + 0/1
 
 Optional:
   FUZZ_RUN_ARGS='-max_total_time=300' ${BASH_SOURCE[0]} ${SESSION_NAME}
-  ${BASH_SOURCE[0]} --replace ${SESSION_NAME}
+  FUZZ_ATTACH=0 ${BASH_SOURCE[0]} ${SESSION_NAME}    # start without attaching
+  ${BASH_SOURCE[0]} --no-attach ${SESSION_NAME}      # same, via flag
 EOF
+
+if [[ "${ATTACH}" == "1" ]]; then
+  if [[ -t 1 ]]; then
+    exec tmux attach -t "${SESSION_NAME}"
+  else
+    echo "stdout is not a TTY; skipping auto-attach" >&2
+    echo "Attach manually with: tmux attach -t ${SESSION_NAME}" >&2
+  fi
+fi

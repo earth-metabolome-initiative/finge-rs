@@ -2,13 +2,26 @@
 
 use finge_rs::{
     AtomPairFingerprint, BitFingerprint, CountEcfpFingerprint, CountFingerprint, EcfpFingerprint,
-    Fingerprint, LayeredCountEcfpFingerprint, LayeredCountFingerprint, MaccsFingerprint,
-    TopologicalTorsionFingerprint, smiles_support::SmilesRdkitScratch,
+    EcfpGraph, Fingerprint, HypervalentMutator, HypervalentPredicate, ImpossibleAtomicNumberMutator,
+    ImpossibleAtomicNumberPredicate, ImpossibleBondTypeMutator, ImpossibleBondTypePredicate,
+    ImpossibleChargeMutator, ImpossibleChargePredicate, ImpossibleHCountMutator,
+    ImpossibleHCountPredicate, ImpossibleIsotopeMutator, ImpossibleIsotopePredicate,
+    ImpossibleRingFlagMutator, ImpossibleRingFlagPredicate, LayeredCountEcfpFingerprint,
+    LayeredCountFingerprint, MaccsFingerprint, MolecularAtom, MolecularBond, MolecularGraph,
+    Mutator, MutatorError, TopologicalPathologyMutator, TopologicalPathologyPredicate,
+    TopologicalTorsionFingerprint, ViolationPredicate, max_natural_valence,
+    smiles_support::SmilesRdkitScratch,
 };
-use smiles_parser::smiles::Smiles;
+use rand_chacha::{ChaCha8Rng, rand_core::SeedableRng};
 use smarts_rs::PreparedTarget;
+use smiles_parser::smiles::Smiles;
 
 const MAX_INPUT_BYTES: usize = 128;
+
+/// Fingerprint pinned for every mutator harness so the baseline-vs-mutated
+/// comparison is collision-proof (count-based, 65 536 slots).
+const MUTATOR_FP_RADIUS: u8 = 2;
+const MUTATOR_FP_SIZE: usize = 65_536;
 
 pub fn parse_smiles(input: String) -> Option<Smiles> {
     if input.is_empty() || input.len() > MAX_INPUT_BYTES {
@@ -184,6 +197,602 @@ pub fn fuzz_topological_torsion(smiles: Smiles) {
 
     for index in prepared_shortest_paths.active_bits() {
         assert!(prepared_default.contains(index));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared primitives for the per-mutator fuzz harnesses
+// ---------------------------------------------------------------------------
+
+/// Returns the count-ECFP every per-mutator harness pins to as its baseline:
+/// radius 2, 65 536 slots, count-based (collision-proof under field changes).
+pub fn count_ecfp_fingerprint<G>(graph: &G) -> CountFingerprint
+where
+    G: EcfpGraph<NodeId = usize>,
+    G::NodeSymbol: MolecularAtom,
+    G::Bond: MolecularBond<NodeId = usize>,
+{
+    CountEcfpFingerprint::new(MUTATOR_FP_RADIUS, MUTATOR_FP_SIZE).compute(graph)
+}
+
+/// Sorted multiset of pre-hash atom invariant tuples — collision-proof
+/// stand-in for the hash-level ECFP comparison, used to detect *any* field
+/// change regardless of fold behaviour.
+pub fn atom_field_signature<G>(graph: &G) -> Vec<(u32, u32, u32, i32, i32, bool)>
+where
+    G: EcfpGraph<NodeId = usize>,
+    G::NodeSymbol: MolecularAtom,
+{
+    let mut values: Vec<_> = (0..graph.atom_count())
+        .map(|atom_id| {
+            let f = graph.ecfp_atom_invariant_fields(atom_id);
+            (
+                f.atomic_number,
+                f.total_degree,
+                f.total_hydrogens,
+                f.formal_charge,
+                f.delta_mass,
+                f.in_ring,
+            )
+        })
+        .collect();
+    values.sort();
+    values
+}
+
+/// Sorted list of `(min(src, dst), max(src, dst), ecfp_bond_invariant)`
+/// triples — one entry per undirected bond. Used to detect bond-channel
+/// changes in the bond-type mutator's minimality check.
+pub fn bond_invariant_signature<G>(graph: &G) -> Vec<(usize, usize, u32)>
+where
+    G: EcfpGraph<NodeId = usize>,
+    G::NodeSymbol: MolecularAtom,
+    G::Bond: MolecularBond<NodeId = usize>,
+{
+    let mut bonds = Vec::new();
+    for source in 0..graph.atom_count() {
+        for bond in graph.bonds(source) {
+            let other = if bond.source() == source {
+                bond.target()
+            } else if bond.target() == source {
+                bond.source()
+            } else {
+                continue;
+            };
+            if other > source {
+                let inv = graph.ecfp_bond_invariant(&bond, true);
+                bonds.push((source, other, inv));
+            }
+        }
+    }
+    bonds.sort();
+    bonds
+}
+
+/// Counts atom indices whose field tuples differ between two graphs of equal
+/// atom count.
+fn count_atom_field_diffs<G1, G2>(before: &G1, after: &G2) -> usize
+where
+    G1: EcfpGraph<NodeId = usize>,
+    G1::NodeSymbol: MolecularAtom,
+    G2: EcfpGraph<NodeId = usize>,
+    G2::NodeSymbol: MolecularAtom,
+{
+    assert_eq!(
+        before.atom_count(),
+        after.atom_count(),
+        "mutator must not change atom count",
+    );
+    (0..before.atom_count())
+        .filter(|&atom_id| {
+            before.ecfp_atom_invariant_fields(atom_id) != after.ecfp_atom_invariant_fields(atom_id)
+        })
+        .count()
+}
+
+/// Asserts that exactly `expected` atom-ids have differing field tuples
+/// between `before` and `after`. The atom-channel mutators all pick exactly
+/// one target, so `expected == 1` is the standard case.
+pub fn assert_mutator_minimal_diff_atoms<G1, G2>(before: &G1, after: &G2, expected: usize)
+where
+    G1: EcfpGraph<NodeId = usize>,
+    G1::NodeSymbol: MolecularAtom,
+    G2: EcfpGraph<NodeId = usize>,
+    G2::NodeSymbol: MolecularAtom,
+{
+    let diffs = count_atom_field_diffs(before, after);
+    assert_eq!(
+        diffs, expected,
+        "expected exactly {expected} atom-id(s) to change, found {diffs}",
+    );
+}
+
+/// Asserts that the atom field tuples of `before` and `after` are identical
+/// everywhere. Used by the bond-channel mutator, which by design must leave
+/// every atom's pre-hash invariant tuple untouched.
+pub fn assert_mutator_no_atom_diff<G1, G2>(before: &G1, after: &G2)
+where
+    G1: EcfpGraph<NodeId = usize>,
+    G1::NodeSymbol: MolecularAtom,
+    G2: EcfpGraph<NodeId = usize>,
+    G2::NodeSymbol: MolecularAtom,
+{
+    let diffs = count_atom_field_diffs(before, after);
+    assert_eq!(
+        diffs, 0,
+        "bond-channel mutator changed {diffs} atom field tuple(s); expected 0",
+    );
+}
+
+/// Asserts that exactly `expected` bonds have differing invariants between
+/// `before` and `after`. Used by the bond-type mutator (`expected == 1`).
+pub fn assert_mutator_minimal_diff_bonds<G1, G2>(before: &G1, after: &G2, expected: usize)
+where
+    G1: EcfpGraph<NodeId = usize>,
+    G1::NodeSymbol: MolecularAtom,
+    G1::Bond: MolecularBond<NodeId = usize>,
+    G2: EcfpGraph<NodeId = usize>,
+    G2::NodeSymbol: MolecularAtom,
+    G2::Bond: MolecularBond<NodeId = usize>,
+{
+    let before_bonds = bond_invariant_signature(before);
+    let after_bonds = bond_invariant_signature(after);
+    assert_eq!(
+        before_bonds.len(),
+        after_bonds.len(),
+        "mutator must not change bond count",
+    );
+    let diffs = before_bonds
+        .iter()
+        .zip(after_bonds.iter())
+        .filter(|(b, a)| b.0 != a.0 || b.1 != a.1 || b.2 != a.2)
+        .count();
+    assert_eq!(
+        diffs, expected,
+        "expected exactly {expected} bond(s) to change, found {diffs}",
+    );
+}
+
+/// Exhaustive match on `MutatorError` — the compiler will flag any newly
+/// added variant. Used by every per-mutator harness on the `Err` branch as a
+/// "well-defined error" sanity check.
+pub fn assert_well_defined_error(err: MutatorError) {
+    match err {
+        MutatorError::GraphTooSmall
+        | MutatorError::NoEligibleAtom
+        | MutatorError::NoEligibleBond
+        | MutatorError::AlreadyViolated => {}
+    }
+}
+
+/// Enforces every invariant in the per-mutator contract for
+/// `ImpossibleAtomicNumberMutator`.
+pub fn fuzz_impossible_atomic_number_invariants(smiles: Smiles, seed: u64) {
+    let mut scratch = SmilesRdkitScratch::default();
+    let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
+        return;
+    };
+    let baseline_fp = count_ecfp_fingerprint(&graph);
+    let baseline_atoms = atom_field_signature(&graph);
+
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    match ImpossibleAtomicNumberMutator.mutate(graph, &mut rng) {
+        Err(err) => assert_well_defined_error(err),
+        Ok(mutated) => {
+            // (3) hash-level visibility
+            assert_ne!(
+                baseline_fp,
+                count_ecfp_fingerprint(&mutated),
+                "ImpossibleAtomicNumberMutator: count-ECFP unchanged",
+            );
+
+            // (4) primary predicate fires
+            assert!(
+                ImpossibleAtomicNumberPredicate.check(&mutated),
+                "ImpossibleAtomicNumberPredicate did not fire",
+            );
+
+            // (5) determinism — re-running with the same seed yields the
+            // same ECFP
+            let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
+            let mutated2 = ImpossibleAtomicNumberMutator
+                .mutate(graph, &mut rng2)
+                .expect("deterministic re-run must succeed");
+            assert_eq!(
+                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&mutated2),
+                "ImpossibleAtomicNumberMutator is non-deterministic for a fixed seed",
+            );
+
+            // (6) minimality — exactly one atom changed
+            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+
+            // (7) atom-channel: field multiset differs
+            assert_ne!(
+                baseline_atoms,
+                atom_field_signature(&mutated),
+                "ImpossibleAtomicNumberMutator: atom field multiset unchanged",
+            );
+
+            // (8) class-specific minimum-violation invariant
+            let z_violation = (0..mutated.atom_count()).any(|atom_id| {
+                let z = mutated.ecfp_atom_invariant_fields(atom_id).atomic_number;
+                z == 0 || z > 118
+            });
+            assert!(
+                z_violation,
+                "ImpossibleAtomicNumberMutator did not produce a Z outside 1..=118",
+            );
+        }
+    }
+}
+
+/// Enforces every invariant in the per-mutator contract for
+/// `HypervalentMutator`.
+pub fn fuzz_hypervalent_invariants(smiles: Smiles, seed: u64) {
+    let mut scratch = SmilesRdkitScratch::default();
+    let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
+        return;
+    };
+    let baseline_fp = count_ecfp_fingerprint(&graph);
+    let baseline_atoms = atom_field_signature(&graph);
+
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    match HypervalentMutator.mutate(graph, &mut rng) {
+        Err(err) => assert_well_defined_error(err),
+        Ok(mutated) => {
+            assert_ne!(
+                baseline_fp,
+                count_ecfp_fingerprint(&mutated),
+                "HypervalentMutator: count-ECFP unchanged",
+            );
+            assert!(
+                HypervalentPredicate.check(&mutated),
+                "HypervalentPredicate did not fire",
+            );
+
+            let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
+            let mutated2 = HypervalentMutator
+                .mutate(graph, &mut rng2)
+                .expect("deterministic re-run must succeed");
+            assert_eq!(
+                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&mutated2),
+                "HypervalentMutator is non-deterministic for a fixed seed",
+            );
+
+            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_ne!(
+                baseline_atoms,
+                atom_field_signature(&mutated),
+                "HypervalentMutator: atom field multiset unchanged",
+            );
+
+            let degree_violation = (0..mutated.atom_count()).any(|atom_id| {
+                let f = mutated.ecfp_atom_invariant_fields(atom_id);
+                f.total_degree > max_natural_valence(f.atomic_number)
+            });
+            assert!(
+                degree_violation,
+                "HypervalentMutator did not produce total_degree > max_natural_valence(Z)",
+            );
+        }
+    }
+}
+
+/// Enforces every invariant in the per-mutator contract for
+/// `ImpossibleHCountMutator`.
+pub fn fuzz_impossible_h_count_invariants(smiles: Smiles, seed: u64) {
+    let mut scratch = SmilesRdkitScratch::default();
+    let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
+        return;
+    };
+    let baseline_fp = count_ecfp_fingerprint(&graph);
+    let baseline_atoms = atom_field_signature(&graph);
+
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    match ImpossibleHCountMutator.mutate(graph, &mut rng) {
+        Err(err) => assert_well_defined_error(err),
+        Ok(mutated) => {
+            assert_ne!(
+                baseline_fp,
+                count_ecfp_fingerprint(&mutated),
+                "ImpossibleHCountMutator: count-ECFP unchanged",
+            );
+            assert!(
+                ImpossibleHCountPredicate.check(&mutated),
+                "ImpossibleHCountPredicate did not fire",
+            );
+
+            let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
+            let mutated2 = ImpossibleHCountMutator
+                .mutate(graph, &mut rng2)
+                .expect("deterministic re-run must succeed");
+            assert_eq!(
+                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&mutated2),
+                "ImpossibleHCountMutator is non-deterministic for a fixed seed",
+            );
+
+            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_ne!(
+                baseline_atoms,
+                atom_field_signature(&mutated),
+                "ImpossibleHCountMutator: atom field multiset unchanged",
+            );
+
+            let h_violation = (0..mutated.atom_count()).any(|atom_id| {
+                let f = mutated.ecfp_atom_invariant_fields(atom_id);
+                f.total_hydrogens > max_natural_valence(f.atomic_number) + 1
+            });
+            assert!(
+                h_violation,
+                "ImpossibleHCountMutator did not produce total_hydrogens > max + 1",
+            );
+        }
+    }
+}
+
+/// Enforces every invariant in the per-mutator contract for
+/// `ImpossibleChargeMutator`.
+pub fn fuzz_impossible_charge_invariants(smiles: Smiles, seed: u64) {
+    let mut scratch = SmilesRdkitScratch::default();
+    let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
+        return;
+    };
+    let baseline_fp = count_ecfp_fingerprint(&graph);
+    let baseline_atoms = atom_field_signature(&graph);
+
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    match ImpossibleChargeMutator.mutate(graph, &mut rng) {
+        Err(err) => assert_well_defined_error(err),
+        Ok(mutated) => {
+            assert_ne!(
+                baseline_fp,
+                count_ecfp_fingerprint(&mutated),
+                "ImpossibleChargeMutator: count-ECFP unchanged",
+            );
+            assert!(
+                ImpossibleChargePredicate.check(&mutated),
+                "ImpossibleChargePredicate did not fire",
+            );
+
+            let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
+            let mutated2 = ImpossibleChargeMutator
+                .mutate(graph, &mut rng2)
+                .expect("deterministic re-run must succeed");
+            assert_eq!(
+                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&mutated2),
+                "ImpossibleChargeMutator is non-deterministic for a fixed seed",
+            );
+
+            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_ne!(
+                baseline_atoms,
+                atom_field_signature(&mutated),
+                "ImpossibleChargeMutator: atom field multiset unchanged",
+            );
+
+            let charge_violation = (0..mutated.atom_count()).any(|atom_id| {
+                mutated
+                    .ecfp_atom_invariant_fields(atom_id)
+                    .formal_charge
+                    .unsigned_abs()
+                    > 6
+            });
+            assert!(
+                charge_violation,
+                "ImpossibleChargeMutator did not produce |formal_charge| > 6",
+            );
+        }
+    }
+}
+
+/// Enforces every invariant in the per-mutator contract for
+/// `ImpossibleIsotopeMutator`.
+pub fn fuzz_impossible_isotope_invariants(smiles: Smiles, seed: u64) {
+    let mut scratch = SmilesRdkitScratch::default();
+    let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
+        return;
+    };
+    let baseline_fp = count_ecfp_fingerprint(&graph);
+    let baseline_atoms = atom_field_signature(&graph);
+
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    match ImpossibleIsotopeMutator.mutate(graph, &mut rng) {
+        Err(err) => assert_well_defined_error(err),
+        Ok(mutated) => {
+            assert_ne!(
+                baseline_fp,
+                count_ecfp_fingerprint(&mutated),
+                "ImpossibleIsotopeMutator: count-ECFP unchanged",
+            );
+            assert!(
+                ImpossibleIsotopePredicate.check(&mutated),
+                "ImpossibleIsotopePredicate did not fire",
+            );
+
+            let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
+            let mutated2 = ImpossibleIsotopeMutator
+                .mutate(graph, &mut rng2)
+                .expect("deterministic re-run must succeed");
+            assert_eq!(
+                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&mutated2),
+                "ImpossibleIsotopeMutator is non-deterministic for a fixed seed",
+            );
+
+            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_ne!(
+                baseline_atoms,
+                atom_field_signature(&mutated),
+                "ImpossibleIsotopeMutator: atom field multiset unchanged",
+            );
+
+            let isotope_violation = (0..mutated.atom_count()).any(|atom_id| {
+                mutated
+                    .ecfp_atom_invariant_fields(atom_id)
+                    .delta_mass
+                    .unsigned_abs()
+                    > 80
+            });
+            assert!(
+                isotope_violation,
+                "ImpossibleIsotopeMutator did not produce |delta_mass| > 80",
+            );
+        }
+    }
+}
+
+/// Enforces every invariant in the per-mutator contract for
+/// `ImpossibleRingFlagMutator`.
+pub fn fuzz_impossible_ring_flag_invariants(smiles: Smiles, seed: u64) {
+    let mut scratch = SmilesRdkitScratch::default();
+    let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
+        return;
+    };
+    let baseline_fp = count_ecfp_fingerprint(&graph);
+    let baseline_atoms = atom_field_signature(&graph);
+
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    match ImpossibleRingFlagMutator.mutate(graph, &mut rng) {
+        Err(err) => assert_well_defined_error(err),
+        Ok(mutated) => {
+            assert_ne!(
+                baseline_fp,
+                count_ecfp_fingerprint(&mutated),
+                "ImpossibleRingFlagMutator: count-ECFP unchanged",
+            );
+            assert!(
+                ImpossibleRingFlagPredicate.check(&mutated),
+                "ImpossibleRingFlagPredicate did not fire",
+            );
+
+            let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
+            let mutated2 = ImpossibleRingFlagMutator
+                .mutate(graph, &mut rng2)
+                .expect("deterministic re-run must succeed");
+            assert_eq!(
+                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&mutated2),
+                "ImpossibleRingFlagMutator is non-deterministic for a fixed seed",
+            );
+
+            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_ne!(
+                baseline_atoms,
+                atom_field_signature(&mutated),
+                "ImpossibleRingFlagMutator: atom field multiset unchanged",
+            );
+
+            // Predicate purity already covers the class-specific minimum-
+            // violation invariant (atom flagged in-ring with < 2 heavy
+            // neighbours), so we don't duplicate the check here.
+        }
+    }
+}
+
+/// Enforces every invariant in the per-mutator contract for
+/// `ImpossibleBondTypeMutator`. This is the only bond-channel mutator: it
+/// must leave atom invariants alone and change exactly one bond.
+pub fn fuzz_impossible_bond_type_invariants(smiles: Smiles, seed: u64) {
+    let mut scratch = SmilesRdkitScratch::default();
+    let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
+        return;
+    };
+    let baseline_fp = count_ecfp_fingerprint(&graph);
+    let baseline_bonds = bond_invariant_signature(&graph);
+
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    match ImpossibleBondTypeMutator.mutate(graph, &mut rng) {
+        Err(err) => assert_well_defined_error(err),
+        Ok(mutated) => {
+            assert_ne!(
+                baseline_fp,
+                count_ecfp_fingerprint(&mutated),
+                "ImpossibleBondTypeMutator: count-ECFP unchanged",
+            );
+            assert!(
+                ImpossibleBondTypePredicate.check(&mutated),
+                "ImpossibleBondTypePredicate did not fire",
+            );
+
+            let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
+            let mutated2 = ImpossibleBondTypeMutator
+                .mutate(graph, &mut rng2)
+                .expect("deterministic re-run must succeed");
+            assert_eq!(
+                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&mutated2),
+                "ImpossibleBondTypeMutator is non-deterministic for a fixed seed",
+            );
+
+            // Bond-channel minimality: zero atom changes, exactly one bond.
+            assert_mutator_no_atom_diff(&graph, &mutated);
+            assert_mutator_minimal_diff_bonds(&graph, &mutated, 1);
+
+            let mutated_bonds = bond_invariant_signature(&mutated);
+            assert_ne!(
+                baseline_bonds, mutated_bonds,
+                "ImpossibleBondTypeMutator: bond invariant signature unchanged",
+            );
+            let off_set_bond = mutated_bonds
+                .iter()
+                .any(|&(_, _, inv)| !matches!(inv, 1 | 2 | 3 | 12));
+            assert!(
+                off_set_bond,
+                "ImpossibleBondTypeMutator did not produce a bond invariant outside {{1,2,3,12}}",
+            );
+        }
+    }
+}
+
+/// Enforces every invariant in the per-mutator contract for
+/// `TopologicalPathologyMutator`.
+pub fn fuzz_topological_pathology_invariants(smiles: Smiles, seed: u64) {
+    let mut scratch = SmilesRdkitScratch::default();
+    let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
+        return;
+    };
+    let baseline_fp = count_ecfp_fingerprint(&graph);
+    let baseline_atoms = atom_field_signature(&graph);
+
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    match TopologicalPathologyMutator.mutate(graph, &mut rng) {
+        Err(err) => assert_well_defined_error(err),
+        Ok(mutated) => {
+            assert_ne!(
+                baseline_fp,
+                count_ecfp_fingerprint(&mutated),
+                "TopologicalPathologyMutator: count-ECFP unchanged",
+            );
+            assert!(
+                TopologicalPathologyPredicate.check(&mutated),
+                "TopologicalPathologyPredicate did not fire",
+            );
+
+            let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
+            let mutated2 = TopologicalPathologyMutator
+                .mutate(graph, &mut rng2)
+                .expect("deterministic re-run must succeed");
+            assert_eq!(
+                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&mutated2),
+                "TopologicalPathologyMutator is non-deterministic for a fixed seed",
+            );
+
+            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_ne!(
+                baseline_atoms,
+                atom_field_signature(&mutated),
+                "TopologicalPathologyMutator: atom field multiset unchanged",
+            );
+
+            // Class-specific minimum-violation invariant: predicate purity
+            // already covers it (some aromatic bond's endpoints disagree on
+            // in_ring), so we rely on the predicate-fired assertion above.
+        }
     }
 }
 
