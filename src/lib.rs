@@ -36,7 +36,8 @@ pub use crate::{
         RdkFingerprint, TopologicalTorsionFingerprint,
     },
     mutations::{
-        Mutator, MutatorError, PredicateClass, ViolationClass, ViolationLabel, ViolationPredicate,
+        AtomFieldOverride, InvalidatedGraph, Mutator, MutatorError, PredicateClass, ViolationClass,
+        ViolationLabel, ViolationPredicate,
     },
     traits::{
         AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph,
@@ -49,12 +50,12 @@ pub mod prelude {
     #[cfg(feature = "smarts-support")]
     pub use crate::MaccsFingerprint;
     pub use crate::{
-        AtomInvariantFields, AtomPairFingerprint, AtomPairGraph, BitFingerprint,
+        AtomFieldOverride, AtomInvariantFields, AtomPairFingerprint, AtomPairGraph, BitFingerprint,
         CountEcfpFingerprint, CountFingerprint, EcfpFingerprint, EcfpGraph, Fingerprint,
-        LayeredCountEcfpFingerprint, LayeredCountFingerprint, MolecularAtom, MolecularBond,
-        MolecularGraph, Mutator, MutatorError, PredicateClass, RdkFingerprint, RdkFingerprintGraph,
-        TopologicalTorsionFingerprint, TopologicalTorsionGraph, ViolationClass, ViolationLabel,
-        ViolationPredicate,
+        InvalidatedGraph, LayeredCountEcfpFingerprint, LayeredCountFingerprint, MolecularAtom,
+        MolecularBond, MolecularGraph, Mutator, MutatorError, PredicateClass, RdkFingerprint,
+        RdkFingerprintGraph, TopologicalTorsionFingerprint, TopologicalTorsionGraph,
+        ViolationClass, ViolationLabel, ViolationPredicate,
     };
     #[cfg(feature = "smiles-support")]
     pub use crate::{
