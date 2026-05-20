@@ -10,6 +10,9 @@ pub mod mutators;
 pub mod predicate;
 pub mod violation_class;
 
+#[cfg(test)]
+mod proptest_invariants;
+
 pub use invalidated_graph::{AtomFieldOverride, InvalidatedGraph};
 pub use mutator::{Mutator, MutatorError};
 pub use mutator_mix::MutatorMix;
