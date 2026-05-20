@@ -19,6 +19,7 @@ smarts-support = ["dep:smarts_rs", "dep:smiles-parser"]
 bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
 elements_rs = { version = "0.2.7", optional = true }
 geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", branch = "main", default-features = false, features = ["alloc"] }
+rand_core = { version = "0.6", default-features = false }
 smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "4545f4702115c0a92df2b2761545faf9b0a8191b", package = "smarts-rs", default-features = false, optional = true }
 smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false, optional = true }
 
