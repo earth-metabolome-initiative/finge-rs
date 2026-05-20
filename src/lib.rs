@@ -10,6 +10,7 @@ pub mod bit_fingerprint;
 pub mod count_fingerprint;
 pub mod fingerprint;
 pub mod fingerprints;
+pub mod mutations;
 pub mod traits;
 
 #[cfg(feature = "smarts-support")]
@@ -34,6 +35,7 @@ pub use crate::{
         AtomPairFingerprint, CountEcfpFingerprint, EcfpFingerprint, LayeredCountEcfpFingerprint,
         RdkFingerprint, TopologicalTorsionFingerprint,
     },
+    mutations::{ViolationClass, ViolationLabel},
     traits::{
         AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph,
         RdkFingerprintGraph, TopologicalTorsionGraph,
@@ -49,7 +51,7 @@ pub mod prelude {
         CountEcfpFingerprint, CountFingerprint, EcfpFingerprint, EcfpGraph, Fingerprint,
         LayeredCountEcfpFingerprint, LayeredCountFingerprint, MolecularAtom, MolecularBond,
         MolecularGraph, RdkFingerprint, RdkFingerprintGraph, TopologicalTorsionFingerprint,
-        TopologicalTorsionGraph,
+        TopologicalTorsionGraph, ViolationClass, ViolationLabel,
     };
     #[cfg(feature = "smiles-support")]
     pub use crate::{
