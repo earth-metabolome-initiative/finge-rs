@@ -5,11 +5,17 @@
 
 pub mod invalidated_graph;
 pub mod mutator;
+pub mod mutators;
 pub mod predicate;
 pub mod violation_class;
 
 pub use invalidated_graph::{AtomFieldOverride, InvalidatedGraph};
 pub use mutator::{Mutator, MutatorError};
+pub use mutators::{
+    HypervalentMutator, ImpossibleAtomicNumberMutator, ImpossibleBondTypeMutator,
+    ImpossibleChargeMutator, ImpossibleHCountMutator, ImpossibleIsotopeMutator,
+    ImpossibleRingFlagMutator, TopologicalPathologyMutator,
+};
 pub use predicate::{
     HypervalentPredicate, ImpossibleAtomicNumberPredicate, ImpossibleBondTypePredicate,
     ImpossibleChargePredicate, ImpossibleHCountPredicate, ImpossibleIsotopePredicate,
