@@ -5,6 +5,7 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
+pub mod atom_invariant_fields;
 pub mod bit_fingerprint;
 pub mod count_fingerprint;
 pub mod fingerprint;
@@ -25,6 +26,7 @@ pub use crate::smiles_support::{
     SmilesRdkitScratch,
 };
 pub use crate::{
+    atom_invariant_fields::{AtomInvariantFields, morgan_hash_combine, morgan_hash_u32_sequence},
     bit_fingerprint::BitFingerprint,
     count_fingerprint::{CountFingerprint, LayeredCountFingerprint},
     fingerprint::Fingerprint,
@@ -43,10 +45,11 @@ pub mod prelude {
     #[cfg(feature = "smarts-support")]
     pub use crate::MaccsFingerprint;
     pub use crate::{
-        AtomPairFingerprint, AtomPairGraph, BitFingerprint, CountEcfpFingerprint, CountFingerprint,
-        EcfpFingerprint, EcfpGraph, Fingerprint, LayeredCountEcfpFingerprint,
-        LayeredCountFingerprint, MolecularAtom, MolecularBond, MolecularGraph, RdkFingerprint,
-        RdkFingerprintGraph, TopologicalTorsionFingerprint, TopologicalTorsionGraph,
+        AtomInvariantFields, AtomPairFingerprint, AtomPairGraph, BitFingerprint,
+        CountEcfpFingerprint, CountFingerprint, EcfpFingerprint, EcfpGraph, Fingerprint,
+        LayeredCountEcfpFingerprint, LayeredCountFingerprint, MolecularAtom, MolecularBond,
+        MolecularGraph, RdkFingerprint, RdkFingerprintGraph, TopologicalTorsionFingerprint,
+        TopologicalTorsionGraph,
     };
     #[cfg(feature = "smiles-support")]
     pub use crate::{

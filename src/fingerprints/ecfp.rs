@@ -1,6 +1,7 @@
 use alloc::{vec, vec::Vec};
 
 use crate::{
+    atom_invariant_fields::morgan_hash_combine as hash_combine,
     bit_fingerprint::BitFingerprint,
     count_fingerprint::{CountFingerprint, LayeredCountFingerprint},
     fingerprint::Fingerprint,
@@ -416,14 +417,6 @@ fn pair_hash(left: u32, right: u32) -> u32 {
     seed
 }
 
-#[inline]
-fn hash_combine(seed: &mut u32, value: u32) {
-    *seed ^= value
-        .wrapping_add(0x9e37_79b9)
-        .wrapping_add(seed.wrapping_shl(6))
-        .wrapping_add(seed.wrapping_shr(2));
-}
-
 fn adjacency<G>(graph: &G, use_bond_types: bool, ignored_atoms: &[bool]) -> Vec<Vec<NeighborInfo>>
 where
     G: EcfpGraph<NodeId = usize>,
@@ -619,6 +612,16 @@ mod tests {
     }
 
     impl EcfpGraph for MalformedBondSmiles {
+        fn ecfp_atom_invariant_fields(
+            &self,
+            atom_id: usize,
+        ) -> crate::atom_invariant_fields::AtomInvariantFields {
+            crate::atom_invariant_fields::AtomInvariantFields {
+                atomic_number: atom_id as u32 + 1,
+                ..crate::atom_invariant_fields::AtomInvariantFields::default()
+            }
+        }
+
         fn ecfp_atom_invariant(&self, atom_id: usize, _include_ring_membership: bool) -> u32 {
             atom_id as u32 + 1
         }

@@ -11,9 +11,12 @@ use smiles_parser::{
     },
 };
 
-use crate::traits::{
-    AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph, RdkFingerprintGraph,
-    TopologicalTorsionGraph,
+use crate::{
+    atom_invariant_fields::AtomInvariantFields,
+    traits::{
+        AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph,
+        RdkFingerprintGraph, TopologicalTorsionGraph,
+    },
 };
 
 const ATOM_PAIR_TYPE_BUCKETS: [u8; 15] = [5, 6, 7, 8, 9, 14, 15, 16, 17, 33, 34, 35, 51, 52, 53];
@@ -873,14 +876,13 @@ fn rdkit_atom_pair_pi_electrons(
 }
 
 #[inline]
-fn rdkit_atom_invariant(
+fn rdkit_atom_invariant_fields(
     smiles: &Smiles,
     atom_id: usize,
-    include_ring_membership: bool,
     ring_atom_membership: &RingAtomMembership,
-) -> u32 {
+) -> AtomInvariantFields {
     let Some(atom) = smiles.node_by_id(atom_id) else {
-        return 0;
+        return AtomInvariantFields::default();
     };
 
     let atomic_number = atom
@@ -910,26 +912,16 @@ fn rdkit_atom_invariant(
     let total_hydrogens = explicit_hydrogens + implicit_hydrogens;
     let total_degree = heavy_degree + total_hydrogens;
     let formal_charge =
-        normalized_rdkit_charge(smiles, atom_id, atom).unwrap_or(atom.charge_value()) as i32 as u32;
-    let delta_mass = morgan_delta_mass(atom) as u32;
+        i32::from(normalized_rdkit_charge(smiles, atom_id, atom).unwrap_or(atom.charge_value()));
+    let delta_mass = morgan_delta_mass(atom);
 
-    if include_ring_membership && ring_atom_membership.contains_atom(atom_id) {
-        hash_u32_sequence(&[
-            atomic_number,
-            total_degree,
-            total_hydrogens,
-            formal_charge,
-            delta_mass,
-            1,
-        ])
-    } else {
-        hash_u32_sequence(&[
-            atomic_number,
-            total_degree,
-            total_hydrogens,
-            formal_charge,
-            delta_mass,
-        ])
+    AtomInvariantFields {
+        atomic_number,
+        total_degree,
+        total_hydrogens,
+        formal_charge,
+        delta_mass,
+        in_ring: ring_atom_membership.contains_atom(atom_id),
     }
 }
 
@@ -977,23 +969,6 @@ fn rdkit_atomic_weight(element: elements_rs::Element) -> f64 {
         elements_rs::Element::Lr => 262.0,
         _ => (element.standard_atomic_weight() * 1000.0).round() / 1000.0,
     }
-}
-
-#[inline]
-fn hash_u32_sequence(values: &[u32]) -> u32 {
-    let mut seed = 0_u32;
-    for &value in values {
-        hash_combine(&mut seed, value);
-    }
-    seed
-}
-
-#[inline]
-fn hash_combine(seed: &mut u32, value: u32) {
-    *seed ^= value
-        .wrapping_add(0x9e37_79b9)
-        .wrapping_add(seed.wrapping_shl(6))
-        .wrapping_add(seed.wrapping_shr(2));
 }
 
 /// Error raised while preparing a `smiles-parser` graph for RDKit-parity
@@ -1200,13 +1175,8 @@ impl EcfpGraph for SmilesRdkitGraph<'_> {
     }
 
     #[inline]
-    fn ecfp_atom_invariant(&self, atom_id: usize, include_ring_membership: bool) -> u32 {
-        rdkit_atom_invariant(
-            self.smiles,
-            atom_id,
-            include_ring_membership,
-            self.ring_atom_membership,
-        )
+    fn ecfp_atom_invariant_fields(&self, atom_id: usize) -> AtomInvariantFields {
+        rdkit_atom_invariant_fields(self.smiles, atom_id, self.ring_atom_membership)
     }
 
     #[inline]
@@ -1523,9 +1493,9 @@ mod tests {
 
     use super::{
         SmilesPreparationError, SmilesRdkitScratch,
-        charge_separated_phosphoryl_center_double_oxygen_count, hash_u32_sequence,
+        charge_separated_phosphoryl_center_double_oxygen_count,
         hypervalent_halogen_oxoacid_center_double_oxygen_count, morgan_delta_mass,
-        normalize_smiles_for_rdkit, normalized_rdkit_charge, rdkit_atom_invariant,
+        normalize_smiles_for_rdkit, normalized_rdkit_charge, rdkit_atom_invariant_fields,
         rdkit_atom_pair_atom_code, rdkit_atom_pair_pi_electrons, rdkit_atom_pair_type_index,
         rdkit_atomic_weight, rdkit_bond_order, rdkit_morgan_bond_type_code,
         rdkit_topological_torsion_atom_code,
@@ -1672,7 +1642,6 @@ mod tests {
             assert_eq!(rdkit_atomic_weight(element), expected);
         }
         assert_eq!(rdkit_atomic_weight(Element::Cl), 35.45);
-        assert_eq!(hash_u32_sequence(&[1, 2, 3]), hash_u32_sequence(&[1, 2, 3]));
 
         let unlabeled: Smiles = "CC".parse().expect("fixture SMILES should parse");
         let isotope: Smiles = "[13CH4]".parse().expect("fixture SMILES should parse");
@@ -1877,10 +1846,16 @@ mod tests {
     }
 
     #[test]
-    fn rdkit_atom_invariant_handles_invalid_atom_ids() {
+    fn rdkit_atom_invariant_fields_handles_invalid_atom_ids() {
+        // Out-of-range atom ids must not panic; the field builder returns
+        // the default tuple (all zeros, in_ring = false) so downstream code
+        // sees a deterministic, well-defined value.
         let smiles: Smiles = "CC".parse().expect("fixture SMILES should parse");
         let ring = smiles.ring_atom_membership();
-        assert_eq!(rdkit_atom_invariant(&smiles, 99, true, &ring), 0);
+        assert_eq!(
+            rdkit_atom_invariant_fields(&smiles, 99, &ring),
+            crate::AtomInvariantFields::default(),
+        );
     }
 
     #[test]

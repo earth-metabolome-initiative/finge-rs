@@ -2,6 +2,8 @@ use alloc::{collections::BTreeMap, vec, vec::Vec};
 
 use geometric_traits::traits::{Graph, MonopartiteGraph, MonoplexGraph, Vocabulary};
 
+use crate::atom_invariant_fields::AtomInvariantFields;
+
 /// Trait implemented by molecular atom node types.
 pub trait MolecularAtom {
     /// Chemistry-facing atom identity used by simple fingerprints.
@@ -69,8 +71,25 @@ where
         false
     }
 
+    /// Returns the pre-hash RDKit-style atom invariant fields for `atom_id`.
+    ///
+    /// Implementors decompose the atom into the canonical
+    /// `(atomic_number, total_degree, total_hydrogens, formal_charge,
+    /// delta_mass, in_ring)` tuple; the default
+    /// [`ecfp_atom_invariant`](Self::ecfp_atom_invariant) hashes it.
+    fn ecfp_atom_invariant_fields(&self, atom_id: usize) -> AtomInvariantFields;
+
     /// Returns the RDKit-style atom invariant used to seed ECFP.
-    fn ecfp_atom_invariant(&self, atom_id: usize, include_ring_membership: bool) -> u32;
+    ///
+    /// The default implementation builds the field tuple via
+    /// [`ecfp_atom_invariant_fields`](Self::ecfp_atom_invariant_fields) and
+    /// hashes it via [`AtomInvariantFields::to_invariant`]. Implementors may
+    /// override for performance but must produce bit-identical output.
+    #[inline]
+    fn ecfp_atom_invariant(&self, atom_id: usize, include_ring_membership: bool) -> u32 {
+        self.ecfp_atom_invariant_fields(atom_id)
+            .to_invariant(include_ring_membership)
+    }
 
     /// Returns the RDKit-style bond invariant used during neighborhood expansion.
     fn ecfp_bond_invariant(&self, bond: &Self::Bond, use_bond_types: bool) -> u32;
