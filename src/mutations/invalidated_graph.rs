@@ -157,6 +157,57 @@ where
             || self.atom_is_ignored_overrides.iter().any(Option::is_some)
     }
 
+    /// Returns whether at least one override actually changes the inner's
+    /// effective state — i.e. an atom-field override whose post-`apply`
+    /// tuple differs from the inner's, a bond-invariant override whose
+    /// stored value differs from the inner's, or an atom-is-ignored override
+    /// whose value differs from the inner's flag.
+    ///
+    /// Recorded but identity-equal overrides (e.g. `in_ring=Some(false)`
+    /// written onto an atom that the inner already reports as `in_ring=false`)
+    /// return `false`. Used by [`crate::MutatorMix::sample`] to detect
+    /// compositions where two mutators on the same atom-channel cancelled
+    /// each other out.
+    #[must_use]
+    pub fn has_effective_perturbation(&self) -> bool {
+        // Atom-field overrides.
+        for (atom_id, slot) in self.atom_field_overrides.iter().enumerate() {
+            if let Some(ov) = slot
+                && ov.is_active()
+            {
+                let inner_fields = self.inner.ecfp_atom_invariant_fields(atom_id);
+                if ov.apply(inner_fields) != inner_fields {
+                    return true;
+                }
+            }
+        }
+        // Atom-is-ignored overrides.
+        for (atom_id, slot) in self.atom_is_ignored_overrides.iter().enumerate() {
+            if let Some(value) = *slot
+                && value != self.inner.ecfp_atom_is_ignored(atom_id)
+            {
+                return true;
+            }
+        }
+        // Bond-invariant overrides — compare each recorded override to the
+        // inner's bond invariant for that endpoint pair.
+        for (&(a, b), &override_inv) in &self.bond_invariant_overrides {
+            for bond in self.inner.bonds(a) {
+                let other = if bond.source() == a {
+                    bond.target()
+                } else if bond.target() == a {
+                    bond.source()
+                } else {
+                    continue;
+                };
+                if other == b && self.inner.ecfp_bond_invariant(&bond, true) != override_inv {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Clears all field overrides on `atom_id`.
     ///
     /// No-op when `atom_id` is out of range.

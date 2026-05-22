@@ -283,9 +283,12 @@ where
     ///
     /// # Errors
     ///
-    /// Returns [`MutatorError`] from the *last* failed slot only when every
-    /// slot's retries were exhausted (no mutation was applied at all). When
-    /// the mix is empty, returns [`MutatorError::NoEligibleAtom`].
+    /// Returns [`MutatorError`] from the *last* failed slot when every slot's
+    /// retries were exhausted (no mutation was applied at all). Returns
+    /// [`MutatorError::CompositionCancelled`] when mutations were applied but
+    /// later writes on the same atom-channel clobbered earlier ones, leaving
+    /// the wrapper pre-hash-identical to the inner. When the mix is empty,
+    /// returns [`MutatorError::NoEligibleAtom`].
     pub fn sample(
         &self,
         graph: G,
@@ -317,6 +320,18 @@ where
 
         if !applied_any {
             return Err(last_err);
+        }
+
+        // Reject samples where every successful mutation was clobbered by a
+        // later same-channel write. Without this guard, training data could
+        // include "negatives" that are byte-identical to the baseline graph
+        // (see fuzz/artifacts/mutator_mix/crash-9f067edf… — `c8ccccccc8c`
+        // where ImpossibleRingFlagMutator wrote `in_ring=Some(true)` on
+        // the dangling atom 8 and TopologicalPathologyMutator then wrote
+        // `in_ring=Some(false)` over it, returning the atom to its inner
+        // state of `in_ring=false`).
+        if !wrapper.has_effective_perturbation() {
+            return Err(MutatorError::CompositionCancelled);
         }
 
         let mut label = ViolationLabel::empty();
@@ -728,6 +743,51 @@ mod tests {
             err,
             MutatorError::NoEligibleAtom | MutatorError::GraphTooSmall,
         ));
+    }
+
+    #[test]
+    fn fuzz_regression_composition_cancellation_yields_err() {
+        // `c8ccccccc8c` + seed 14_612_714_913_291_461_578 originally
+        // produced an Ok((wrapper, label)) where the wrapper was
+        // pre-hash-identical to the inner: composition picked
+        // `ImpossibleRingFlagMutator` (in_ring=Some(true) on the dangling
+        // aromatic atom 8) then `TopologicalPathologyMutator`
+        // (in_ring=Some(false) on the same atom), clobbering back to the
+        // inner's false. `has_effective_perturbation` now catches this
+        // and `MutatorMix::sample` returns
+        // `MutatorError::CompositionCancelled`. See
+        // `fuzz/artifacts/mutator_mix/crash-9f067edf…`.
+        let parsed: smiles_parser::smiles::Smiles = "c8ccccccc8c".parse().expect("parse");
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&parsed);
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();
+        let mut rng = ChaCha8Rng::seed_from_u64(14_612_714_913_291_461_578);
+        match mix.sample(graph, &mut rng) {
+            Ok((wrapper, _)) => {
+                use crate::{traits::EcfpGraph as _, traits::MolecularGraph as _};
+                // If sampling did succeed (e.g. after future RNG changes),
+                // the wrapper must carry an *effective* perturbation —
+                // not just a recorded override that no-ops.
+                let any_changed = (0..wrapper.atom_count()).any(|id| {
+                    wrapper.inner().ecfp_atom_invariant_fields(id)
+                        != wrapper.ecfp_atom_invariant_fields(id)
+                });
+                assert!(
+                    any_changed,
+                    "successful sample must change at least one atom invariant tuple",
+                );
+            }
+            Err(err) => assert!(
+                matches!(
+                    err,
+                    MutatorError::CompositionCancelled
+                        | MutatorError::NoEligibleAtom
+                        | MutatorError::NoEligibleBond
+                        | MutatorError::GraphTooSmall
+                ),
+                "unexpected error variant: {err:?}",
+            ),
+        }
     }
 
     #[test]

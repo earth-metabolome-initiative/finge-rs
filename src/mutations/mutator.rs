@@ -57,6 +57,11 @@ pub enum MutatorError {
     /// The graph is below the minimum size required by this mutator
     /// (e.g. mutators that need at least one bond reject single-atom graphs).
     GraphTooSmall,
+    /// Returned by [`crate::MutatorMix::sample`] when every successfully
+    /// applied mutation in a composition was clobbered by a later mutation
+    /// on the same atom-channel, leaving the wrapper pre-hash-identical to
+    /// the inner graph. The caller should retry with a fresh seed or input.
+    CompositionCancelled,
 }
 
 impl core::fmt::Display for MutatorError {
@@ -66,6 +71,9 @@ impl core::fmt::Display for MutatorError {
             Self::NoEligibleBond => f.write_str("no eligible bond for mutation"),
             Self::AlreadyViolated => f.write_str("input already exhibits the target violation"),
             Self::GraphTooSmall => f.write_str("graph too small for this mutator"),
+            Self::CompositionCancelled => {
+                f.write_str("composed mutations cancelled out, no effective perturbation")
+            }
         }
     }
 }
@@ -95,6 +103,10 @@ mod tests {
         assert_eq!(
             MutatorError::GraphTooSmall.to_string(),
             "graph too small for this mutator",
+        );
+        assert_eq!(
+            MutatorError::CompositionCancelled.to_string(),
+            "composed mutations cancelled out, no effective perturbation",
         );
     }
 }

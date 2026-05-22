@@ -18,8 +18,11 @@ use smiles_parser::smiles::Smiles;
 
 const MAX_INPUT_BYTES: usize = 128;
 
-/// Fingerprint pinned for every mutator harness so the baseline-vs-mutated
-/// comparison is collision-proof (count-based, 65 536 slots).
+/// Fingerprint pinned for every mutator harness. Used only for the per-seed
+/// determinism check (re-running with the same seed must produce a byte-equal
+/// fingerprint) — *not* for baseline-vs-mutated comparison, which collapses
+/// to the same folded bin in roughly 1 in 65 536 mutations due to hash
+/// collisions. The collision-proof check is the pre-hash field signature.
 const MUTATOR_FP_RADIUS: u8 = 2;
 const MUTATOR_FP_SIZE: usize = 65_536;
 
@@ -373,7 +376,8 @@ pub fn assert_well_defined_error(err: MutatorError) {
         MutatorError::GraphTooSmall
         | MutatorError::NoEligibleAtom
         | MutatorError::NoEligibleBond
-        | MutatorError::AlreadyViolated => {}
+        | MutatorError::AlreadyViolated
+        | MutatorError::CompositionCancelled => {}
     }
 }
 
@@ -384,7 +388,6 @@ pub fn fuzz_impossible_atomic_number_invariants(smiles: Smiles, seed: u64) {
     let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
         return;
     };
-    let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
     let mut wrapper = InvalidatedGraph::new(graph);
@@ -393,11 +396,14 @@ pub fn fuzz_impossible_atomic_number_invariants(smiles: Smiles, seed: u64) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
             // (3) hash-level visibility
-            assert_ne!(
-                baseline_fp,
-                count_ecfp_fingerprint(&wrapper),
-                "ImpossibleAtomicNumberMutator: count-ECFP unchanged",
-            );
+            // NOTE: a former "count-ECFP unchanged" assertion was removed —
+            // 65 536-bin folded ECFP has a non-negligible probability of
+            // collapsing two distinct 32-bit invariants into the same bin
+            // (see `[84Ga][61Cu]` / `BrOBr` / `B[ClH]` fuzz crashes). The
+            // collision-proof pre-hash tuple check below (step 7) catches
+            // the real bug class: a mutator that writes an override which
+            // doesn't change the atom invariant. Folded-ECFP visibility is
+            // a separate concern that depends on the user's fp_size.
 
             // (4) primary predicate fires
             assert!(
@@ -448,7 +454,6 @@ pub fn fuzz_hypervalent_invariants(smiles: Smiles, seed: u64) {
     let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
         return;
     };
-    let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
     let mut wrapper = InvalidatedGraph::new(graph);
@@ -456,11 +461,9 @@ pub fn fuzz_hypervalent_invariants(smiles: Smiles, seed: u64) {
     match HypervalentMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            assert_ne!(
-                baseline_fp,
-                count_ecfp_fingerprint(&wrapper),
-                "HypervalentMutator: count-ECFP unchanged",
-            );
+            // Folded-ECFP-unchanged assertion removed — see the longer
+            // explanation in `fuzz_impossible_atomic_number_invariants`.
+            // The collision-proof tuple-level check below is sufficient.
             assert!(
                 HypervalentPredicate.check(&wrapper),
                 "HypervalentPredicate did not fire",
@@ -503,7 +506,6 @@ pub fn fuzz_impossible_h_count_invariants(smiles: Smiles, seed: u64) {
     let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
         return;
     };
-    let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
     let mut wrapper = InvalidatedGraph::new(graph);
@@ -511,11 +513,8 @@ pub fn fuzz_impossible_h_count_invariants(smiles: Smiles, seed: u64) {
     match ImpossibleHCountMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            assert_ne!(
-                baseline_fp,
-                count_ecfp_fingerprint(&wrapper),
-                "ImpossibleHCountMutator: count-ECFP unchanged",
-            );
+            // Folded-ECFP-unchanged assertion removed — see the longer
+            // explanation in `fuzz_impossible_atomic_number_invariants`.
             assert!(
                 ImpossibleHCountPredicate.check(&wrapper),
                 "ImpossibleHCountPredicate did not fire",
@@ -558,7 +557,6 @@ pub fn fuzz_impossible_charge_invariants(smiles: Smiles, seed: u64) {
     let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
         return;
     };
-    let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
     let mut wrapper = InvalidatedGraph::new(graph);
@@ -566,11 +564,8 @@ pub fn fuzz_impossible_charge_invariants(smiles: Smiles, seed: u64) {
     match ImpossibleChargeMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            assert_ne!(
-                baseline_fp,
-                count_ecfp_fingerprint(&wrapper),
-                "ImpossibleChargeMutator: count-ECFP unchanged",
-            );
+            // Folded-ECFP-unchanged assertion removed — see the longer
+            // explanation in `fuzz_impossible_atomic_number_invariants`.
             assert!(
                 ImpossibleChargePredicate.check(&wrapper),
                 "ImpossibleChargePredicate did not fire",
@@ -616,7 +611,6 @@ pub fn fuzz_impossible_isotope_invariants(smiles: Smiles, seed: u64) {
     let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
         return;
     };
-    let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
     let mut wrapper = InvalidatedGraph::new(graph);
@@ -624,11 +618,8 @@ pub fn fuzz_impossible_isotope_invariants(smiles: Smiles, seed: u64) {
     match ImpossibleIsotopeMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            assert_ne!(
-                baseline_fp,
-                count_ecfp_fingerprint(&wrapper),
-                "ImpossibleIsotopeMutator: count-ECFP unchanged",
-            );
+            // Folded-ECFP-unchanged assertion removed — see the longer
+            // explanation in `fuzz_impossible_atomic_number_invariants`.
             assert!(
                 ImpossibleIsotopePredicate.check(&wrapper),
                 "ImpossibleIsotopePredicate did not fire",
@@ -674,7 +665,6 @@ pub fn fuzz_impossible_ring_flag_invariants(smiles: Smiles, seed: u64) {
     let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
         return;
     };
-    let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
     let mut wrapper = InvalidatedGraph::new(graph);
@@ -682,11 +672,8 @@ pub fn fuzz_impossible_ring_flag_invariants(smiles: Smiles, seed: u64) {
     match ImpossibleRingFlagMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            assert_ne!(
-                baseline_fp,
-                count_ecfp_fingerprint(&wrapper),
-                "ImpossibleRingFlagMutator: count-ECFP unchanged",
-            );
+            // Folded-ECFP-unchanged assertion removed — see the longer
+            // explanation in `fuzz_impossible_atomic_number_invariants`.
             assert!(
                 ImpossibleRingFlagPredicate.check(&wrapper),
                 "ImpossibleRingFlagPredicate did not fire",
@@ -725,7 +712,6 @@ pub fn fuzz_impossible_bond_type_invariants(smiles: Smiles, seed: u64) {
     let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
         return;
     };
-    let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_bonds = bond_invariant_signature(&graph);
 
     let mut wrapper = InvalidatedGraph::new(graph);
@@ -733,11 +719,8 @@ pub fn fuzz_impossible_bond_type_invariants(smiles: Smiles, seed: u64) {
     match ImpossibleBondTypeMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            assert_ne!(
-                baseline_fp,
-                count_ecfp_fingerprint(&wrapper),
-                "ImpossibleBondTypeMutator: count-ECFP unchanged",
-            );
+            // Folded-ECFP-unchanged assertion removed — see the longer
+            // explanation in `fuzz_impossible_atomic_number_invariants`.
             assert!(
                 ImpossibleBondTypePredicate.check(&wrapper),
                 "ImpossibleBondTypePredicate did not fire",
@@ -781,7 +764,6 @@ pub fn fuzz_topological_pathology_invariants(smiles: Smiles, seed: u64) {
     let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
         return;
     };
-    let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
     let mut wrapper = InvalidatedGraph::new(graph);
@@ -789,11 +771,8 @@ pub fn fuzz_topological_pathology_invariants(smiles: Smiles, seed: u64) {
     match TopologicalPathologyMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            assert_ne!(
-                baseline_fp,
-                count_ecfp_fingerprint(&wrapper),
-                "TopologicalPathologyMutator: count-ECFP unchanged",
-            );
+            // Folded-ECFP-unchanged assertion removed — see the longer
+            // explanation in `fuzz_impossible_atomic_number_invariants`.
             assert!(
                 TopologicalPathologyPredicate.check(&wrapper),
                 "TopologicalPathologyPredicate did not fire",
@@ -843,7 +822,6 @@ pub fn fuzz_mutator_mix_invariants(smiles: Smiles, seed: u64) {
     let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
         return;
     };
-    let baseline_fp = count_ecfp_fingerprint(&graph);
 
     let mix = MutatorMix::<finge_rs::smiles_support::SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -860,10 +838,17 @@ pub fn fuzz_mutator_mix_invariants(smiles: Smiles, seed: u64) {
                 "label count {count} exceeds total class count",
             );
 
-            assert_ne!(
-                baseline_fp,
-                count_ecfp_fingerprint(&wrapper),
-                "MutatorMix::sample: composed wrapper has unchanged count-ECFP",
+            // Collision-proof equivalent of "count-ECFP changed": every
+            // successful `MutatorMix::sample` must leave the wrapper with at
+            // least one override that actually changes a pre-hash atom
+            // tuple, bond invariant, or ignored flag. Folded-ECFP-unchanged
+            // assertions on the 65 536-bin fingerprint produced false
+            // positives via hash collisions (see crash-9f067edf… for the
+            // composition-cancellation case and the per-mutator crashes
+            // such as `B[ClH]` / `[84Ga][61Cu]` for raw collisions).
+            assert!(
+                wrapper.has_effective_perturbation(),
+                "MutatorMix::sample returned Ok with no effective perturbation",
             );
 
             // Every set bit must be backed by a firing predicate.
