@@ -28,11 +28,13 @@ where
     G: EcfpGraph,
     G::NodeSymbol: MolecularAtom,
 {
-    type Output = InvalidatedGraph<G>;
-
-    fn mutate(&self, graph: G, rng: &mut dyn RngCore) -> Result<Self::Output, MutatorError> {
-        let target = pick_unignored_atom(rng, &graph).ok_or(MutatorError::NoEligibleAtom)?;
-        let current = graph.ecfp_atom_invariant_fields(target).delta_mass;
+    fn mutate_in_place(
+        &self,
+        wrapper: &mut InvalidatedGraph<G>,
+        rng: &mut dyn RngCore,
+    ) -> Result<(), MutatorError> {
+        let target = pick_unignored_atom(rng, wrapper).ok_or(MutatorError::NoEligibleAtom)?;
+        let current = wrapper.ecfp_atom_invariant_fields(target).delta_mass;
         let mut pick = (rng.next_u32() as usize) % DELTA_MASS_CHOICES.len();
         // Guarantee `override != current` — same defensive scheme as
         // `ImpossibleChargeMutator`.
@@ -41,9 +43,8 @@ where
         }
         let override_dm = DELTA_MASS_CHOICES[pick];
 
-        let mut wrapper = InvalidatedGraph::new(graph);
         wrapper.set_delta_mass_override(target, override_dm);
-        Ok(wrapper)
+        Ok(())
     }
 
     #[inline]
@@ -60,7 +61,7 @@ mod tests {
 
     use super::ImpossibleIsotopeMutator;
     use crate::{
-        EcfpFingerprint, Fingerprint, Mutator, ViolationClass,
+        EcfpFingerprint, Fingerprint, InvalidatedGraph, Mutator, ViolationClass,
         mutations::predicate::{
             ImpossibleIsotopePredicate, ViolationPredicate, has_impossible_isotope,
         },
@@ -83,14 +84,23 @@ mod tests {
         );
     }
 
+    fn mutate<'a>(
+        inner: crate::smiles_support_impl::SmilesRdkitGraph<'a>,
+        seed: u64,
+    ) -> InvalidatedGraph<crate::smiles_support_impl::SmilesRdkitGraph<'a>> {
+        let mut wrapper = InvalidatedGraph::new(inner);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        ImpossibleIsotopeMutator
+            .mutate_in_place(&mut wrapper, &mut rng)
+            .expect("mutation should succeed");
+        wrapper
+    }
+
     #[test]
     fn mutator_returns_ok_and_predicate_fires() {
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x30);
-        let mutated = ImpossibleIsotopeMutator
-            .mutate(inner, &mut rng)
-            .expect("mutation should succeed");
+        let mutated = mutate(inner, 0x30);
         assert!(ImpossibleIsotopePredicate.check(&mutated));
         assert!(has_impossible_isotope(&mutated));
     }
@@ -100,10 +110,7 @@ mod tests {
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
         let baseline = EcfpFingerprint::new(2, 2048).compute(&inner);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x31);
-        let mutated = ImpossibleIsotopeMutator
-            .mutate(inner, &mut rng)
-            .expect("mutation should succeed");
+        let mutated = mutate(inner, 0x31);
         let mutated_fp = EcfpFingerprint::new(2, 2048).compute(&mutated);
         assert_ne!(
             baseline.active_bits().collect::<Vec<_>>(),
@@ -128,11 +135,12 @@ mod tests {
         let inner = scratch.prepare(&parsed);
         let baseline = CountEcfpFingerprint::new(2, 65_536).compute(&inner);
 
+        let mut wrapper = InvalidatedGraph::new(inner);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let mutated = ImpossibleIsotopeMutator
-            .mutate(inner, &mut rng)
+        ImpossibleIsotopeMutator
+            .mutate_in_place(&mut wrapper, &mut rng)
             .expect("mutator returned Err on a fuzz-regression input");
-        let mutated_fp = CountEcfpFingerprint::new(2, 65_536).compute(&mutated);
+        let mutated_fp = CountEcfpFingerprint::new(2, 65_536).compute(&wrapper);
         assert_ne!(
             baseline, mutated_fp,
             "ImpossibleIsotopeMutator: ECFP unchanged for {smiles:?} / seed {seed}",
@@ -141,7 +149,7 @@ mod tests {
 
     #[test]
     fn mutator_returns_no_eligible_atom_when_all_atoms_ignored() {
-        use crate::{InvalidatedGraph, MutatorError, traits::MolecularGraph as _};
+        use crate::{MutatorError, traits::MolecularGraph as _};
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
         let mut all_ignored = InvalidatedGraph::new(inner);
@@ -150,7 +158,7 @@ mod tests {
         }
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let err = ImpossibleIsotopeMutator
-            .mutate(all_ignored, &mut rng)
+            .mutate_in_place(&mut all_ignored, &mut rng)
             .expect_err("every atom is ignored; mutator should decline");
         assert_eq!(err, MutatorError::NoEligibleAtom);
     }

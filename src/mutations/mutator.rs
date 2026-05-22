@@ -4,35 +4,42 @@
 use rand_core::RngCore;
 
 use crate::{
-    mutations::violation_class::ViolationClass,
+    mutations::{invalidated_graph::InvalidatedGraph, violation_class::ViolationClass},
     traits::{EcfpGraph, MolecularAtom},
 };
 
 /// A mutation operator that perturbs an [`EcfpGraph`] in a way that is, by
 /// construction, visible to the ECFP output.
 ///
-/// Mutators consume the input graph and return either a perturbed wrapper or a
-/// [`MutatorError`] indicating that no eligible mutation exists for this input.
+/// Mutators write field-level overrides into an [`InvalidatedGraph`] wrapper
+/// shared across one or more invocations, enabling [`crate::MutatorMix`] to
+/// compose several mutations on the same molecule (possibly on the same atom).
+/// They return either `Ok(())` or a [`MutatorError`] when no eligible target
+/// exists.
 ///
 /// The trait method takes `rng: &mut dyn RngCore` rather than a generic `R`
 /// parameter so that mutators remain object-safe and can be stored together in
-/// a heterogeneous collection (see `MutatorMix`).
+/// a heterogeneous collection (see [`crate::MutatorMix`]).
 pub trait Mutator<G>
 where
     G: EcfpGraph,
     G::NodeSymbol: MolecularAtom,
 {
-    /// Concrete output graph type. Every built-in mutator returns
-    /// `InvalidatedGraph<G>`; user-defined mutators may pick another type.
-    type Output: EcfpGraph<NodeSymbol = G::NodeSymbol>;
-
-    /// Applies the mutation, consuming `graph`.
+    /// Applies the mutation in place, writing overrides into `wrapper`.
+    ///
+    /// Mutators observe the wrapper's *current* (possibly already-mutated)
+    /// state when selecting targets, so composing several mutations means
+    /// each mutator picks against the cumulative perturbation.
     ///
     /// # Errors
     ///
-    /// Returns a [`MutatorError`] when the input graph contains no candidate
-    /// the mutator could target without producing a no-op.
-    fn mutate(&self, graph: G, rng: &mut dyn RngCore) -> Result<Self::Output, MutatorError>;
+    /// Returns a [`MutatorError`] when the wrapper contains no candidate the
+    /// mutator could target without producing a no-op.
+    fn mutate_in_place(
+        &self,
+        wrapper: &mut InvalidatedGraph<G>,
+        rng: &mut dyn RngCore,
+    ) -> Result<(), MutatorError>;
 
     /// Returns the violation class this mutator is designed to introduce.
     fn primary_class(&self) -> ViolationClass;

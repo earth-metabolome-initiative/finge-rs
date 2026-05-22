@@ -10,7 +10,7 @@ use crate::{
         mutators::{collect_atoms_matching, pick_from_slice},
         violation_class::ViolationClass,
     },
-    traits::{EcfpGraph, MolecularAtom, MolecularBond},
+    traits::{EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph},
 };
 
 #[inline]
@@ -45,26 +45,27 @@ where
     G: EcfpGraph,
     G::NodeSymbol: MolecularAtom,
 {
-    type Output = InvalidatedGraph<G>;
-
-    fn mutate(&self, graph: G, rng: &mut dyn RngCore) -> Result<Self::Output, MutatorError> {
-        let atom_count = graph.atom_count();
+    fn mutate_in_place(
+        &self,
+        wrapper: &mut InvalidatedGraph<G>,
+        rng: &mut dyn RngCore,
+    ) -> Result<(), MutatorError> {
+        let atom_count = wrapper.atom_count();
         if atom_count == 0 {
             return Err(MutatorError::GraphTooSmall);
         }
 
         let candidates = collect_atoms_matching(atom_count, |atom_id| {
-            if graph.ecfp_atom_is_ignored(atom_id) {
+            if wrapper.ecfp_atom_is_ignored(atom_id) {
                 return false;
             }
-            let fields = graph.ecfp_atom_invariant_fields(atom_id);
-            !fields.in_ring && heavy_neighbour_count(&graph, atom_id) < 2
+            let fields = wrapper.ecfp_atom_invariant_fields(atom_id);
+            !fields.in_ring && heavy_neighbour_count(wrapper, atom_id) < 2
         });
         let target = *pick_from_slice(rng, &candidates).ok_or(MutatorError::NoEligibleAtom)?;
 
-        let mut wrapper = InvalidatedGraph::new(graph);
         wrapper.set_in_ring_override(target, true);
-        Ok(wrapper)
+        Ok(())
     }
 
     #[inline]
@@ -81,7 +82,7 @@ mod tests {
 
     use super::ImpossibleRingFlagMutator;
     use crate::{
-        EcfpFingerprint, Fingerprint, Mutator, MutatorError, ViolationClass,
+        EcfpFingerprint, Fingerprint, InvalidatedGraph, Mutator, MutatorError, ViolationClass,
         mutations::predicate::{
             ImpossibleRingFlagPredicate, ViolationPredicate, has_impossible_ring_flag,
         },
@@ -104,14 +105,23 @@ mod tests {
         );
     }
 
+    fn mutate<'a>(
+        inner: crate::smiles_support_impl::SmilesRdkitGraph<'a>,
+        seed: u64,
+    ) -> InvalidatedGraph<crate::smiles_support_impl::SmilesRdkitGraph<'a>> {
+        let mut wrapper = InvalidatedGraph::new(inner);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        ImpossibleRingFlagMutator
+            .mutate_in_place(&mut wrapper, &mut rng)
+            .expect("mutation should succeed");
+        wrapper
+    }
+
     #[test]
     fn mutator_succeeds_on_molecule_with_terminal_atom() {
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x40);
-        let mutated = ImpossibleRingFlagMutator
-            .mutate(inner, &mut rng)
-            .expect("CCO has terminal atoms; mutation should succeed");
+        let mutated = mutate(inner, 0x40);
         assert!(ImpossibleRingFlagPredicate.check(&mutated));
         assert!(has_impossible_ring_flag(&mutated));
     }
@@ -121,9 +131,10 @@ mod tests {
         // Every atom in benzene has heavy_neighbour_count == 2.
         let (mut scratch, parsed) = prepared("c1ccccc1");
         let inner = scratch.prepare(&parsed);
+        let mut wrapper = InvalidatedGraph::new(inner);
         let mut rng = ChaCha8Rng::seed_from_u64(0x41);
         let err = ImpossibleRingFlagMutator
-            .mutate(inner, &mut rng)
+            .mutate_in_place(&mut wrapper, &mut rng)
             .expect_err("benzene has no terminus");
         assert_eq!(err, MutatorError::NoEligibleAtom);
     }
@@ -148,11 +159,15 @@ mod tests {
         let mut scratch = SmilesRdkitScratch::default();
         let inner = scratch.prepare(&parsed);
         let baseline = CountEcfpFingerprint::new(2, 65_536).compute(&inner);
+        let mut wrapper = InvalidatedGraph::new(inner);
         let mut rng = ChaCha8Rng::seed_from_u64(8_092_465_109_790_371_496);
         // Mutator may decline if no eligible atom — but if it accepts, ECFP
         // must differ.
-        if let Ok(mutated) = ImpossibleRingFlagMutator.mutate(inner, &mut rng) {
-            let mutated_fp = CountEcfpFingerprint::new(2, 65_536).compute(&mutated);
+        if ImpossibleRingFlagMutator
+            .mutate_in_place(&mut wrapper, &mut rng)
+            .is_ok()
+        {
+            let mutated_fp = CountEcfpFingerprint::new(2, 65_536).compute(&wrapper);
             assert_ne!(baseline, mutated_fp);
         }
     }
@@ -162,10 +177,7 @@ mod tests {
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
         let baseline = EcfpFingerprint::new(2, 2048).compute(&inner);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x42);
-        let mutated = ImpossibleRingFlagMutator
-            .mutate(inner, &mut rng)
-            .expect("mutation should succeed");
+        let mutated = mutate(inner, 0x42);
         let mutated_fp = EcfpFingerprint::new(2, 2048).compute(&mutated);
         assert_ne!(
             baseline.active_bits().collect::<Vec<_>>(),

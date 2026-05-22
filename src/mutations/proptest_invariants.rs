@@ -106,11 +106,12 @@ fn check_ecfp_hash_changes<'a, M>(
     seed: u64,
 ) -> Result<(), TestCaseError>
 where
-    M: Mutator<SmilesRdkitGraph<'a>, Output = InvalidatedGraph<SmilesRdkitGraph<'a>>>,
+    M: Mutator<SmilesRdkitGraph<'a>>,
 {
+    let mut wrapper = InvalidatedGraph::new(inner);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    if let Ok(mutated) = mutator.mutate(inner, &mut rng) {
-        let mutated_fp = make_fingerprint().compute(&mutated);
+    if mutator.mutate_in_place(&mut wrapper, &mut rng).is_ok() {
+        let mutated_fp = make_fingerprint().compute(&wrapper);
         prop_assert_ne!(
             baseline,
             &mutated_fp,
@@ -133,11 +134,12 @@ fn check_atom_field_tuple_changes<'a, M>(
     seed: u64,
 ) -> Result<(), TestCaseError>
 where
-    M: Mutator<SmilesRdkitGraph<'a>, Output = InvalidatedGraph<SmilesRdkitGraph<'a>>>,
+    M: Mutator<SmilesRdkitGraph<'a>>,
 {
+    let mut wrapper = InvalidatedGraph::new(inner);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    if let Ok(mutated) = mutator.mutate(inner, &mut rng) {
-        let mutated_fields = atom_field_signature(&mutated);
+    if mutator.mutate_in_place(&mut wrapper, &mut rng).is_ok() {
+        let mutated_fields = atom_field_signature(&wrapper);
         prop_assert_ne!(baseline_fields, &mutated_fields[..]);
     }
     Ok(())
@@ -152,12 +154,13 @@ fn check_primary_predicate_fires<'a, M, P>(
     seed: u64,
 ) -> Result<(), TestCaseError>
 where
-    M: Mutator<SmilesRdkitGraph<'a>, Output = InvalidatedGraph<SmilesRdkitGraph<'a>>>,
+    M: Mutator<SmilesRdkitGraph<'a>>,
     P: ViolationPredicate<InvalidatedGraph<SmilesRdkitGraph<'a>>>,
 {
+    let mut wrapper = InvalidatedGraph::new(inner);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    if let Ok(mutated) = mutator.mutate(inner, &mut rng) {
-        prop_assert!(predicate.check(&mutated));
+    if mutator.mutate_in_place(&mut wrapper, &mut rng).is_ok() {
+        prop_assert!(predicate.check(&wrapper));
     }
     Ok(())
 }
@@ -169,10 +172,11 @@ fn check_no_panic<'a, M>(
     seed: u64,
 ) -> Result<(), TestCaseError>
 where
-    M: Mutator<SmilesRdkitGraph<'a>, Output = InvalidatedGraph<SmilesRdkitGraph<'a>>>,
+    M: Mutator<SmilesRdkitGraph<'a>>,
 {
+    let mut wrapper = InvalidatedGraph::new(inner);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    let _ = mutator.mutate(inner, &mut rng);
+    let _ = mutator.mutate_in_place(&mut wrapper, &mut rng);
     Ok(())
 }
 

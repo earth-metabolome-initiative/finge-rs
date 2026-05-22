@@ -2,15 +2,15 @@
 
 use finge_rs::{
     AtomPairFingerprint, BitFingerprint, CountEcfpFingerprint, CountFingerprint, EcfpFingerprint,
-    EcfpGraph, Fingerprint, HypervalentMutator, HypervalentPredicate, ImpossibleAtomicNumberMutator,
-    ImpossibleAtomicNumberPredicate, ImpossibleBondTypeMutator, ImpossibleBondTypePredicate,
-    ImpossibleChargeMutator, ImpossibleChargePredicate, ImpossibleHCountMutator,
-    ImpossibleHCountPredicate, ImpossibleIsotopeMutator, ImpossibleIsotopePredicate,
-    ImpossibleRingFlagMutator, ImpossibleRingFlagPredicate, LayeredCountEcfpFingerprint,
-    LayeredCountFingerprint, MaccsFingerprint, MolecularAtom, MolecularBond, MolecularGraph,
-    Mutator, MutatorError, TopologicalPathologyMutator, TopologicalPathologyPredicate,
-    TopologicalTorsionFingerprint, ViolationPredicate, max_natural_valence,
-    smiles_support::SmilesRdkitScratch,
+    EcfpGraph, Fingerprint, HypervalentMutator, HypervalentPredicate,
+    ImpossibleAtomicNumberMutator, ImpossibleAtomicNumberPredicate, ImpossibleBondTypeMutator,
+    ImpossibleBondTypePredicate, ImpossibleChargeMutator, ImpossibleChargePredicate,
+    ImpossibleHCountMutator, ImpossibleHCountPredicate, ImpossibleIsotopeMutator,
+    ImpossibleIsotopePredicate, ImpossibleRingFlagMutator, ImpossibleRingFlagPredicate,
+    InvalidatedGraph, LayeredCountEcfpFingerprint, LayeredCountFingerprint, MaccsFingerprint,
+    MolecularAtom, MolecularBond, MolecularGraph, Mutator, MutatorError,
+    TopologicalPathologyMutator, TopologicalPathologyPredicate, TopologicalTorsionFingerprint,
+    ViolationPredicate, max_natural_valence, smiles_support::SmilesRdkitScratch,
 };
 use rand_chacha::{ChaCha8Rng, rand_core::SeedableRng};
 use smarts_rs::PreparedTarget;
@@ -46,10 +46,16 @@ pub fn assert_bit_fingerprint_basics(fingerprint: &BitFingerprint) {
 
 pub fn assert_count_fingerprint_basics(fingerprint: &CountFingerprint) {
     let active_counts = fingerprint.active_counts().collect::<Vec<_>>();
-    assert!(active_counts.windows(2).all(|window| window[0].0 < window[1].0));
-    assert!(active_counts
-        .iter()
-        .all(|&(index, count)| index < fingerprint.len() && count > 0));
+    assert!(
+        active_counts
+            .windows(2)
+            .all(|window| window[0].0 < window[1].0)
+    );
+    assert!(
+        active_counts
+            .iter()
+            .all(|&(index, count)| index < fingerprint.len() && count > 0)
+    );
     for &(index, count) in &active_counts {
         assert_eq!(fingerprint.count(index), count);
     }
@@ -65,11 +71,17 @@ pub fn assert_layered_count_fingerprint_basics(fingerprint: &LayeredCountFingerp
 
 pub fn assert_count_matches_bit_presence(counts: &CountFingerprint, bits: &BitFingerprint) {
     let active_bits = bits.active_bits().collect::<Vec<_>>();
-    let active_count_bits = counts.active_counts().map(|(index, _)| index).collect::<Vec<_>>();
+    let active_count_bits = counts
+        .active_counts()
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
     assert_eq!(active_bits, active_count_bits);
 }
 
-pub fn assert_layered_sums_match_total(layered: &LayeredCountFingerprint, total: &CountFingerprint) {
+pub fn assert_layered_sums_match_total(
+    layered: &LayeredCountFingerprint,
+    total: &CountFingerprint,
+) {
     assert_eq!(layered.formula().len(), total.len());
     for index in 0..total.len() {
         let layered_sum = layered
@@ -375,48 +387,50 @@ pub fn fuzz_impossible_atomic_number_invariants(smiles: Smiles, seed: u64) {
     let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
+    let mut wrapper = InvalidatedGraph::new(graph);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    match ImpossibleAtomicNumberMutator.mutate(graph, &mut rng) {
+    match ImpossibleAtomicNumberMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
-        Ok(mutated) => {
+        Ok(()) => {
             // (3) hash-level visibility
             assert_ne!(
                 baseline_fp,
-                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&wrapper),
                 "ImpossibleAtomicNumberMutator: count-ECFP unchanged",
             );
 
             // (4) primary predicate fires
             assert!(
-                ImpossibleAtomicNumberPredicate.check(&mutated),
+                ImpossibleAtomicNumberPredicate.check(&wrapper),
                 "ImpossibleAtomicNumberPredicate did not fire",
             );
 
             // (5) determinism — re-running with the same seed yields the
             // same ECFP
+            let mut wrapper2 = InvalidatedGraph::new(graph);
             let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-            let mutated2 = ImpossibleAtomicNumberMutator
-                .mutate(graph, &mut rng2)
+            ImpossibleAtomicNumberMutator
+                .mutate_in_place(&mut wrapper2, &mut rng2)
                 .expect("deterministic re-run must succeed");
             assert_eq!(
-                count_ecfp_fingerprint(&mutated),
-                count_ecfp_fingerprint(&mutated2),
+                count_ecfp_fingerprint(&wrapper),
+                count_ecfp_fingerprint(&wrapper2),
                 "ImpossibleAtomicNumberMutator is non-deterministic for a fixed seed",
             );
 
             // (6) minimality — exactly one atom changed
-            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_mutator_minimal_diff_atoms(&graph, &wrapper, 1);
 
             // (7) atom-channel: field multiset differs
             assert_ne!(
                 baseline_atoms,
-                atom_field_signature(&mutated),
+                atom_field_signature(&wrapper),
                 "ImpossibleAtomicNumberMutator: atom field multiset unchanged",
             );
 
             // (8) class-specific minimum-violation invariant
-            let z_violation = (0..mutated.atom_count()).any(|atom_id| {
-                let z = mutated.ecfp_atom_invariant_fields(atom_id).atomic_number;
+            let z_violation = (0..wrapper.atom_count()).any(|atom_id| {
+                let z = wrapper.ecfp_atom_invariant_fields(atom_id).atomic_number;
                 z == 0 || z > 118
             });
             assert!(
@@ -437,39 +451,41 @@ pub fn fuzz_hypervalent_invariants(smiles: Smiles, seed: u64) {
     let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
+    let mut wrapper = InvalidatedGraph::new(graph);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    match HypervalentMutator.mutate(graph, &mut rng) {
+    match HypervalentMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
-        Ok(mutated) => {
+        Ok(()) => {
             assert_ne!(
                 baseline_fp,
-                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&wrapper),
                 "HypervalentMutator: count-ECFP unchanged",
             );
             assert!(
-                HypervalentPredicate.check(&mutated),
+                HypervalentPredicate.check(&wrapper),
                 "HypervalentPredicate did not fire",
             );
 
+            let mut wrapper2 = InvalidatedGraph::new(graph);
             let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-            let mutated2 = HypervalentMutator
-                .mutate(graph, &mut rng2)
+            HypervalentMutator
+                .mutate_in_place(&mut wrapper2, &mut rng2)
                 .expect("deterministic re-run must succeed");
             assert_eq!(
-                count_ecfp_fingerprint(&mutated),
-                count_ecfp_fingerprint(&mutated2),
+                count_ecfp_fingerprint(&wrapper),
+                count_ecfp_fingerprint(&wrapper2),
                 "HypervalentMutator is non-deterministic for a fixed seed",
             );
 
-            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_mutator_minimal_diff_atoms(&graph, &wrapper, 1);
             assert_ne!(
                 baseline_atoms,
-                atom_field_signature(&mutated),
+                atom_field_signature(&wrapper),
                 "HypervalentMutator: atom field multiset unchanged",
             );
 
-            let degree_violation = (0..mutated.atom_count()).any(|atom_id| {
-                let f = mutated.ecfp_atom_invariant_fields(atom_id);
+            let degree_violation = (0..wrapper.atom_count()).any(|atom_id| {
+                let f = wrapper.ecfp_atom_invariant_fields(atom_id);
                 f.total_degree > max_natural_valence(f.atomic_number)
             });
             assert!(
@@ -490,39 +506,41 @@ pub fn fuzz_impossible_h_count_invariants(smiles: Smiles, seed: u64) {
     let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
+    let mut wrapper = InvalidatedGraph::new(graph);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    match ImpossibleHCountMutator.mutate(graph, &mut rng) {
+    match ImpossibleHCountMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
-        Ok(mutated) => {
+        Ok(()) => {
             assert_ne!(
                 baseline_fp,
-                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&wrapper),
                 "ImpossibleHCountMutator: count-ECFP unchanged",
             );
             assert!(
-                ImpossibleHCountPredicate.check(&mutated),
+                ImpossibleHCountPredicate.check(&wrapper),
                 "ImpossibleHCountPredicate did not fire",
             );
 
+            let mut wrapper2 = InvalidatedGraph::new(graph);
             let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-            let mutated2 = ImpossibleHCountMutator
-                .mutate(graph, &mut rng2)
+            ImpossibleHCountMutator
+                .mutate_in_place(&mut wrapper2, &mut rng2)
                 .expect("deterministic re-run must succeed");
             assert_eq!(
-                count_ecfp_fingerprint(&mutated),
-                count_ecfp_fingerprint(&mutated2),
+                count_ecfp_fingerprint(&wrapper),
+                count_ecfp_fingerprint(&wrapper2),
                 "ImpossibleHCountMutator is non-deterministic for a fixed seed",
             );
 
-            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_mutator_minimal_diff_atoms(&graph, &wrapper, 1);
             assert_ne!(
                 baseline_atoms,
-                atom_field_signature(&mutated),
+                atom_field_signature(&wrapper),
                 "ImpossibleHCountMutator: atom field multiset unchanged",
             );
 
-            let h_violation = (0..mutated.atom_count()).any(|atom_id| {
-                let f = mutated.ecfp_atom_invariant_fields(atom_id);
+            let h_violation = (0..wrapper.atom_count()).any(|atom_id| {
+                let f = wrapper.ecfp_atom_invariant_fields(atom_id);
                 f.total_hydrogens > max_natural_valence(f.atomic_number) + 1
             });
             assert!(
@@ -543,39 +561,41 @@ pub fn fuzz_impossible_charge_invariants(smiles: Smiles, seed: u64) {
     let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
+    let mut wrapper = InvalidatedGraph::new(graph);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    match ImpossibleChargeMutator.mutate(graph, &mut rng) {
+    match ImpossibleChargeMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
-        Ok(mutated) => {
+        Ok(()) => {
             assert_ne!(
                 baseline_fp,
-                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&wrapper),
                 "ImpossibleChargeMutator: count-ECFP unchanged",
             );
             assert!(
-                ImpossibleChargePredicate.check(&mutated),
+                ImpossibleChargePredicate.check(&wrapper),
                 "ImpossibleChargePredicate did not fire",
             );
 
+            let mut wrapper2 = InvalidatedGraph::new(graph);
             let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-            let mutated2 = ImpossibleChargeMutator
-                .mutate(graph, &mut rng2)
+            ImpossibleChargeMutator
+                .mutate_in_place(&mut wrapper2, &mut rng2)
                 .expect("deterministic re-run must succeed");
             assert_eq!(
-                count_ecfp_fingerprint(&mutated),
-                count_ecfp_fingerprint(&mutated2),
+                count_ecfp_fingerprint(&wrapper),
+                count_ecfp_fingerprint(&wrapper2),
                 "ImpossibleChargeMutator is non-deterministic for a fixed seed",
             );
 
-            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_mutator_minimal_diff_atoms(&graph, &wrapper, 1);
             assert_ne!(
                 baseline_atoms,
-                atom_field_signature(&mutated),
+                atom_field_signature(&wrapper),
                 "ImpossibleChargeMutator: atom field multiset unchanged",
             );
 
-            let charge_violation = (0..mutated.atom_count()).any(|atom_id| {
-                mutated
+            let charge_violation = (0..wrapper.atom_count()).any(|atom_id| {
+                wrapper
                     .ecfp_atom_invariant_fields(atom_id)
                     .formal_charge
                     .unsigned_abs()
@@ -599,39 +619,41 @@ pub fn fuzz_impossible_isotope_invariants(smiles: Smiles, seed: u64) {
     let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
+    let mut wrapper = InvalidatedGraph::new(graph);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    match ImpossibleIsotopeMutator.mutate(graph, &mut rng) {
+    match ImpossibleIsotopeMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
-        Ok(mutated) => {
+        Ok(()) => {
             assert_ne!(
                 baseline_fp,
-                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&wrapper),
                 "ImpossibleIsotopeMutator: count-ECFP unchanged",
             );
             assert!(
-                ImpossibleIsotopePredicate.check(&mutated),
+                ImpossibleIsotopePredicate.check(&wrapper),
                 "ImpossibleIsotopePredicate did not fire",
             );
 
+            let mut wrapper2 = InvalidatedGraph::new(graph);
             let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-            let mutated2 = ImpossibleIsotopeMutator
-                .mutate(graph, &mut rng2)
+            ImpossibleIsotopeMutator
+                .mutate_in_place(&mut wrapper2, &mut rng2)
                 .expect("deterministic re-run must succeed");
             assert_eq!(
-                count_ecfp_fingerprint(&mutated),
-                count_ecfp_fingerprint(&mutated2),
+                count_ecfp_fingerprint(&wrapper),
+                count_ecfp_fingerprint(&wrapper2),
                 "ImpossibleIsotopeMutator is non-deterministic for a fixed seed",
             );
 
-            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_mutator_minimal_diff_atoms(&graph, &wrapper, 1);
             assert_ne!(
                 baseline_atoms,
-                atom_field_signature(&mutated),
+                atom_field_signature(&wrapper),
                 "ImpossibleIsotopeMutator: atom field multiset unchanged",
             );
 
-            let isotope_violation = (0..mutated.atom_count()).any(|atom_id| {
-                mutated
+            let isotope_violation = (0..wrapper.atom_count()).any(|atom_id| {
+                wrapper
                     .ecfp_atom_invariant_fields(atom_id)
                     .delta_mass
                     .unsigned_abs()
@@ -655,34 +677,36 @@ pub fn fuzz_impossible_ring_flag_invariants(smiles: Smiles, seed: u64) {
     let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
+    let mut wrapper = InvalidatedGraph::new(graph);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    match ImpossibleRingFlagMutator.mutate(graph, &mut rng) {
+    match ImpossibleRingFlagMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
-        Ok(mutated) => {
+        Ok(()) => {
             assert_ne!(
                 baseline_fp,
-                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&wrapper),
                 "ImpossibleRingFlagMutator: count-ECFP unchanged",
             );
             assert!(
-                ImpossibleRingFlagPredicate.check(&mutated),
+                ImpossibleRingFlagPredicate.check(&wrapper),
                 "ImpossibleRingFlagPredicate did not fire",
             );
 
+            let mut wrapper2 = InvalidatedGraph::new(graph);
             let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-            let mutated2 = ImpossibleRingFlagMutator
-                .mutate(graph, &mut rng2)
+            ImpossibleRingFlagMutator
+                .mutate_in_place(&mut wrapper2, &mut rng2)
                 .expect("deterministic re-run must succeed");
             assert_eq!(
-                count_ecfp_fingerprint(&mutated),
-                count_ecfp_fingerprint(&mutated2),
+                count_ecfp_fingerprint(&wrapper),
+                count_ecfp_fingerprint(&wrapper2),
                 "ImpossibleRingFlagMutator is non-deterministic for a fixed seed",
             );
 
-            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_mutator_minimal_diff_atoms(&graph, &wrapper, 1);
             assert_ne!(
                 baseline_atoms,
-                atom_field_signature(&mutated),
+                atom_field_signature(&wrapper),
                 "ImpossibleRingFlagMutator: atom field multiset unchanged",
             );
 
@@ -704,35 +728,37 @@ pub fn fuzz_impossible_bond_type_invariants(smiles: Smiles, seed: u64) {
     let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_bonds = bond_invariant_signature(&graph);
 
+    let mut wrapper = InvalidatedGraph::new(graph);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    match ImpossibleBondTypeMutator.mutate(graph, &mut rng) {
+    match ImpossibleBondTypeMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
-        Ok(mutated) => {
+        Ok(()) => {
             assert_ne!(
                 baseline_fp,
-                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&wrapper),
                 "ImpossibleBondTypeMutator: count-ECFP unchanged",
             );
             assert!(
-                ImpossibleBondTypePredicate.check(&mutated),
+                ImpossibleBondTypePredicate.check(&wrapper),
                 "ImpossibleBondTypePredicate did not fire",
             );
 
+            let mut wrapper2 = InvalidatedGraph::new(graph);
             let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-            let mutated2 = ImpossibleBondTypeMutator
-                .mutate(graph, &mut rng2)
+            ImpossibleBondTypeMutator
+                .mutate_in_place(&mut wrapper2, &mut rng2)
                 .expect("deterministic re-run must succeed");
             assert_eq!(
-                count_ecfp_fingerprint(&mutated),
-                count_ecfp_fingerprint(&mutated2),
+                count_ecfp_fingerprint(&wrapper),
+                count_ecfp_fingerprint(&wrapper2),
                 "ImpossibleBondTypeMutator is non-deterministic for a fixed seed",
             );
 
             // Bond-channel minimality: zero atom changes, exactly one bond.
-            assert_mutator_no_atom_diff(&graph, &mutated);
-            assert_mutator_minimal_diff_bonds(&graph, &mutated, 1);
+            assert_mutator_no_atom_diff(&graph, &wrapper);
+            assert_mutator_minimal_diff_bonds(&graph, &wrapper, 1);
 
-            let mutated_bonds = bond_invariant_signature(&mutated);
+            let mutated_bonds = bond_invariant_signature(&wrapper);
             assert_ne!(
                 baseline_bonds, mutated_bonds,
                 "ImpossibleBondTypeMutator: bond invariant signature unchanged",
@@ -758,34 +784,36 @@ pub fn fuzz_topological_pathology_invariants(smiles: Smiles, seed: u64) {
     let baseline_fp = count_ecfp_fingerprint(&graph);
     let baseline_atoms = atom_field_signature(&graph);
 
+    let mut wrapper = InvalidatedGraph::new(graph);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
-    match TopologicalPathologyMutator.mutate(graph, &mut rng) {
+    match TopologicalPathologyMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
-        Ok(mutated) => {
+        Ok(()) => {
             assert_ne!(
                 baseline_fp,
-                count_ecfp_fingerprint(&mutated),
+                count_ecfp_fingerprint(&wrapper),
                 "TopologicalPathologyMutator: count-ECFP unchanged",
             );
             assert!(
-                TopologicalPathologyPredicate.check(&mutated),
+                TopologicalPathologyPredicate.check(&wrapper),
                 "TopologicalPathologyPredicate did not fire",
             );
 
+            let mut wrapper2 = InvalidatedGraph::new(graph);
             let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
-            let mutated2 = TopologicalPathologyMutator
-                .mutate(graph, &mut rng2)
+            TopologicalPathologyMutator
+                .mutate_in_place(&mut wrapper2, &mut rng2)
                 .expect("deterministic re-run must succeed");
             assert_eq!(
-                count_ecfp_fingerprint(&mutated),
-                count_ecfp_fingerprint(&mutated2),
+                count_ecfp_fingerprint(&wrapper),
+                count_ecfp_fingerprint(&wrapper2),
                 "TopologicalPathologyMutator is non-deterministic for a fixed seed",
             );
 
-            assert_mutator_minimal_diff_atoms(&graph, &mutated, 1);
+            assert_mutator_minimal_diff_atoms(&graph, &wrapper, 1);
             assert_ne!(
                 baseline_atoms,
-                atom_field_signature(&mutated),
+                atom_field_signature(&wrapper),
                 "TopologicalPathologyMutator: atom field multiset unchanged",
             );
 

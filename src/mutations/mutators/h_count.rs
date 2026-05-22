@@ -27,11 +27,13 @@ where
     G: EcfpGraph,
     G::NodeSymbol: MolecularAtom,
 {
-    type Output = InvalidatedGraph<G>;
-
-    fn mutate(&self, graph: G, rng: &mut dyn RngCore) -> Result<Self::Output, MutatorError> {
-        let target = pick_unignored_atom(rng, &graph).ok_or(MutatorError::NoEligibleAtom)?;
-        let fields = graph.ecfp_atom_invariant_fields(target);
+    fn mutate_in_place(
+        &self,
+        wrapper: &mut InvalidatedGraph<G>,
+        rng: &mut dyn RngCore,
+    ) -> Result<(), MutatorError> {
+        let target = pick_unignored_atom(rng, wrapper).ok_or(MutatorError::NoEligibleAtom)?;
+        let fields = wrapper.ecfp_atom_invariant_fields(target);
         let bump = 2 + (rng.next_u32() % 4);
         let mut override_h = max_natural_valence(fields.atomic_number).saturating_add(bump);
         // Guarantee `override != current` — same defensive measure as in
@@ -41,9 +43,8 @@ where
             override_h = override_h.saturating_add(1);
         }
 
-        let mut wrapper = InvalidatedGraph::new(graph);
         wrapper.set_total_hydrogens_override(target, override_h);
-        Ok(wrapper)
+        Ok(())
     }
 
     #[inline]
@@ -60,7 +61,7 @@ mod tests {
 
     use super::ImpossibleHCountMutator;
     use crate::{
-        EcfpFingerprint, Fingerprint, Mutator, ViolationClass,
+        EcfpFingerprint, Fingerprint, InvalidatedGraph, Mutator, ViolationClass,
         mutations::predicate::{
             ImpossibleHCountPredicate, ViolationPredicate, has_impossible_hydrogen_count,
         },
@@ -83,14 +84,23 @@ mod tests {
         );
     }
 
+    fn mutate<'a>(
+        inner: crate::smiles_support_impl::SmilesRdkitGraph<'a>,
+        seed: u64,
+    ) -> InvalidatedGraph<crate::smiles_support_impl::SmilesRdkitGraph<'a>> {
+        let mut wrapper = InvalidatedGraph::new(inner);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        ImpossibleHCountMutator
+            .mutate_in_place(&mut wrapper, &mut rng)
+            .expect("mutation should succeed");
+        wrapper
+    }
+
     #[test]
     fn mutator_returns_ok_and_predicate_fires() {
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x10);
-        let mutated = ImpossibleHCountMutator
-            .mutate(inner, &mut rng)
-            .expect("mutation should succeed");
+        let mutated = mutate(inner, 0x10);
         assert!(ImpossibleHCountPredicate.check(&mutated));
         assert!(has_impossible_hydrogen_count(&mutated));
     }
@@ -106,7 +116,7 @@ mod tests {
 
     #[test]
     fn mutator_returns_no_eligible_atom_when_all_atoms_ignored() {
-        use crate::{InvalidatedGraph, MutatorError, traits::MolecularGraph as _};
+        use crate::{MutatorError, traits::MolecularGraph as _};
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
         let mut all_ignored = InvalidatedGraph::new(inner);
@@ -115,7 +125,7 @@ mod tests {
         }
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let err = ImpossibleHCountMutator
-            .mutate(all_ignored, &mut rng)
+            .mutate_in_place(&mut all_ignored, &mut rng)
             .expect_err("every atom is ignored; mutator should decline");
         assert_eq!(err, MutatorError::NoEligibleAtom);
     }
@@ -128,11 +138,12 @@ mod tests {
         let mut scratch = SmilesRdkitScratch::default();
         let inner = scratch.prepare(&parsed);
         let baseline = CountEcfpFingerprint::new(2, 65_536).compute(&inner);
+        let mut wrapper = InvalidatedGraph::new(inner);
         let mut rng = ChaCha8Rng::seed_from_u64(5_003_012_597_845_805_159);
-        let mutated = ImpossibleHCountMutator
-            .mutate(inner, &mut rng)
+        ImpossibleHCountMutator
+            .mutate_in_place(&mut wrapper, &mut rng)
             .expect("mutator returned Err on a fuzz-regression input");
-        let mutated_fp = CountEcfpFingerprint::new(2, 65_536).compute(&mutated);
+        let mutated_fp = CountEcfpFingerprint::new(2, 65_536).compute(&wrapper);
         assert_ne!(baseline, mutated_fp);
     }
 
@@ -141,10 +152,7 @@ mod tests {
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
         let baseline = EcfpFingerprint::new(2, 2048).compute(&inner);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x11);
-        let mutated = ImpossibleHCountMutator
-            .mutate(inner, &mut rng)
-            .expect("mutation should succeed");
+        let mutated = mutate(inner, 0x11);
         let mutated_fp = EcfpFingerprint::new(2, 2048).compute(&mutated);
         assert_ne!(
             baseline.active_bits().collect::<Vec<_>>(),

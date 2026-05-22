@@ -63,16 +63,17 @@ where
     G: EcfpGraph,
     G::NodeSymbol: MolecularAtom,
 {
-    type Output = InvalidatedGraph<G>;
-
-    fn mutate(&self, graph: G, rng: &mut dyn RngCore) -> Result<Self::Output, MutatorError> {
-        let bonds = collect_unique_bonds(&graph);
+    fn mutate_in_place(
+        &self,
+        wrapper: &mut InvalidatedGraph<G>,
+        rng: &mut dyn RngCore,
+    ) -> Result<(), MutatorError> {
+        let bonds = collect_unique_bonds(wrapper);
         let &(source, target) = pick_from_slice(rng, &bonds).ok_or(MutatorError::NoEligibleBond)?;
         let override_inv = 13 + (rng.next_u32() % 100);
 
-        let mut wrapper = InvalidatedGraph::new(graph);
         wrapper.set_bond_invariant_override(source, target, override_inv);
-        Ok(wrapper)
+        Ok(())
     }
 
     #[inline]
@@ -89,7 +90,7 @@ mod tests {
 
     use super::ImpossibleBondTypeMutator;
     use crate::{
-        EcfpFingerprint, Fingerprint, Mutator, ViolationClass,
+        EcfpFingerprint, Fingerprint, InvalidatedGraph, Mutator, ViolationClass,
         mutations::predicate::{
             ImpossibleBondTypePredicate, ViolationPredicate, has_impossible_bond_type,
         },
@@ -112,14 +113,23 @@ mod tests {
         );
     }
 
+    fn mutate<'a>(
+        inner: crate::smiles_support_impl::SmilesRdkitGraph<'a>,
+        seed: u64,
+    ) -> InvalidatedGraph<crate::smiles_support_impl::SmilesRdkitGraph<'a>> {
+        let mut wrapper = InvalidatedGraph::new(inner);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        ImpossibleBondTypeMutator
+            .mutate_in_place(&mut wrapper, &mut rng)
+            .expect("mutation should succeed");
+        wrapper
+    }
+
     #[test]
     fn mutator_returns_ok_and_predicate_fires() {
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x50);
-        let mutated = ImpossibleBondTypeMutator
-            .mutate(inner, &mut rng)
-            .expect("mutation should succeed");
+        let mutated = mutate(inner, 0x50);
         assert!(ImpossibleBondTypePredicate.check(&mutated));
         assert!(has_impossible_bond_type(&mutated));
     }
@@ -141,13 +151,17 @@ mod tests {
         let mut scratch = SmilesRdkitScratch::default();
         let inner = scratch.prepare(&parsed);
         let baseline = CountEcfpFingerprint::new(2, 65_536).compute(&inner);
+        let mut wrapper = InvalidatedGraph::new(inner);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         // The mutator may legitimately decline when every bond touches an
         // ignored atom; the invariant is "Ok ⇒ ECFP differs", not "always
         // Ok". The previous bug was that the mutator returned Ok but the
         // fingerprint was unchanged.
-        if let Ok(mutated) = ImpossibleBondTypeMutator.mutate(inner, &mut rng) {
-            let mutated_fp = CountEcfpFingerprint::new(2, 65_536).compute(&mutated);
+        if ImpossibleBondTypeMutator
+            .mutate_in_place(&mut wrapper, &mut rng)
+            .is_ok()
+        {
+            let mutated_fp = CountEcfpFingerprint::new(2, 65_536).compute(&wrapper);
             assert_ne!(
                 baseline, mutated_fp,
                 "ImpossibleBondTypeMutator: ECFP unchanged for {smiles:?} / seed {seed}",
@@ -157,9 +171,10 @@ mod tests {
 
     #[test]
     fn mutator_returns_no_eligible_bond_when_every_bond_touches_ignored_atom() {
-        use crate::{InvalidatedGraph, MutatorError, traits::MolecularGraph as _};
-        // Wrap CCO and mark the middle atom as ignored. Both bonds touch
-        // atom 1, so the bond-channel filter discards every candidate.
+        use crate::{MutatorError, traits::MolecularGraph as _};
+        // Wrap CCO and mark every atom as ignored. Every bond touches an
+        // ignored endpoint, so the bond-channel filter discards every
+        // candidate.
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
         let mut wrapper = InvalidatedGraph::new(inner);
@@ -168,7 +183,7 @@ mod tests {
         }
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let err = ImpossibleBondTypeMutator
-            .mutate(wrapper, &mut rng)
+            .mutate_in_place(&mut wrapper, &mut rng)
             .expect_err("every atom is ignored; mutator should decline");
         assert_eq!(err, MutatorError::NoEligibleBond);
     }
@@ -188,10 +203,7 @@ mod tests {
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
         let baseline = EcfpFingerprint::new(2, 2048).compute(&inner);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x51);
-        let mutated = ImpossibleBondTypeMutator
-            .mutate(inner, &mut rng)
-            .expect("mutation should succeed");
+        let mutated = mutate(inner, 0x51);
         let mutated_fp = EcfpFingerprint::new(2, 2048).compute(&mutated);
         assert_ne!(
             baseline.active_bits().collect::<Vec<_>>(),

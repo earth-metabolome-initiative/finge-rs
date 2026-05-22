@@ -26,10 +26,7 @@ use crate::{
 };
 
 /// One entry in the mix: a mutator and its sampling weight.
-type WeightedMutator<'mix, G> = (
-    Box<dyn Mutator<G, Output = InvalidatedGraph<G>> + 'mix>,
-    f32,
-);
+type WeightedMutator<'mix, G> = (Box<dyn Mutator<G> + 'mix>, f32);
 
 /// Weighted-random sampler over a configurable set of mutators plus a fixed
 /// list of predicates that label each generated negative.
@@ -147,11 +144,7 @@ where
     /// weight).
     #[inline]
     #[must_use]
-    pub fn add_mutator(
-        mut self,
-        mutator: Box<dyn Mutator<G, Output = InvalidatedGraph<G>> + 'mix>,
-        weight: f32,
-    ) -> Self {
+    pub fn add_mutator(mut self, mutator: Box<dyn Mutator<G> + 'mix>, weight: f32) -> Self {
         self.mutators.push((mutator, weight.max(0.0)));
         self
     }
@@ -204,15 +197,16 @@ where
             .get(index)
             .map(|(m, _)| m.as_ref())
             .ok_or(MutatorError::NoEligibleAtom)?;
-        let mutated = mutator.mutate(graph, rng)?;
+        let mut wrapper = InvalidatedGraph::new(graph);
+        mutator.mutate_in_place(&mut wrapper, rng)?;
 
         let mut label = ViolationLabel::empty();
         for predicate in &self.predicates {
-            if predicate.check(&mutated) {
+            if predicate.check(&wrapper) {
                 label.set(predicate.class());
             }
         }
-        Ok((mutated, label))
+        Ok((wrapper, label))
     }
 
     /// Weighted random index in `0..mutators.len()`. Falls back to a uniform

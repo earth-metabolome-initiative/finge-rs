@@ -10,7 +10,7 @@ use crate::{
         mutators::{collect_atoms_matching, pick_from_slice},
         violation_class::ViolationClass,
     },
-    traits::{EcfpGraph, MolecularAtom, MolecularBond},
+    traits::{EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph},
 };
 
 /// Returns whether flipping `atom_id`'s `in_ring` to `false` will trigger
@@ -60,23 +60,24 @@ where
     G: EcfpGraph,
     G::NodeSymbol: MolecularAtom,
 {
-    type Output = InvalidatedGraph<G>;
-
-    fn mutate(&self, graph: G, rng: &mut dyn RngCore) -> Result<Self::Output, MutatorError> {
-        let atom_count = graph.atom_count();
+    fn mutate_in_place(
+        &self,
+        wrapper: &mut InvalidatedGraph<G>,
+        rng: &mut dyn RngCore,
+    ) -> Result<(), MutatorError> {
+        let atom_count = wrapper.atom_count();
         if atom_count == 0 {
             return Err(MutatorError::GraphTooSmall);
         }
 
         let candidates = collect_atoms_matching(atom_count, |atom_id| {
-            !graph.ecfp_atom_is_ignored(atom_id)
-                && flipping_in_ring_creates_aromatic_inconsistency(&graph, atom_id)
+            !wrapper.ecfp_atom_is_ignored(atom_id)
+                && flipping_in_ring_creates_aromatic_inconsistency(wrapper, atom_id)
         });
         let target = *pick_from_slice(rng, &candidates).ok_or(MutatorError::NoEligibleAtom)?;
 
-        let mut wrapper = InvalidatedGraph::new(graph);
         wrapper.set_in_ring_override(target, false);
-        Ok(wrapper)
+        Ok(())
     }
 
     #[inline]
@@ -93,7 +94,7 @@ mod tests {
 
     use super::TopologicalPathologyMutator;
     use crate::{
-        EcfpFingerprint, Fingerprint, Mutator, MutatorError, ViolationClass,
+        EcfpFingerprint, Fingerprint, InvalidatedGraph, Mutator, MutatorError, ViolationClass,
         mutations::predicate::{
             TopologicalPathologyPredicate, ViolationPredicate, has_topological_pathology,
         },
@@ -116,14 +117,34 @@ mod tests {
         );
     }
 
+    fn mutate<'a>(
+        inner: crate::smiles_support_impl::SmilesRdkitGraph<'a>,
+        seed: u64,
+    ) -> InvalidatedGraph<crate::smiles_support_impl::SmilesRdkitGraph<'a>> {
+        let mut wrapper = InvalidatedGraph::new(inner);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        TopologicalPathologyMutator
+            .mutate_in_place(&mut wrapper, &mut rng)
+            .expect("mutation should succeed");
+        wrapper
+    }
+
+    fn try_mutate<'a>(
+        inner: crate::smiles_support_impl::SmilesRdkitGraph<'a>,
+        seed: u64,
+    ) -> Result<InvalidatedGraph<crate::smiles_support_impl::SmilesRdkitGraph<'a>>, MutatorError>
+    {
+        let mut wrapper = InvalidatedGraph::new(inner);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        TopologicalPathologyMutator.mutate_in_place(&mut wrapper, &mut rng)?;
+        Ok(wrapper)
+    }
+
     #[test]
     fn mutator_succeeds_on_aromatic_molecule() {
         let (mut scratch, parsed) = prepared("c1ccccc1");
         let inner = scratch.prepare(&parsed);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x60);
-        let mutated = TopologicalPathologyMutator
-            .mutate(inner, &mut rng)
-            .expect("benzene has aromatic ring atoms");
+        let mutated = mutate(inner, 0x60);
         assert!(TopologicalPathologyPredicate.check(&mutated));
         assert!(has_topological_pathology(&mutated));
     }
@@ -133,10 +154,7 @@ mod tests {
         // CCO has no aromatic bonds; no candidate ring atom exists.
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x61);
-        let err = TopologicalPathologyMutator
-            .mutate(inner, &mut rng)
-            .expect_err("CCO is aliphatic");
+        let err = try_mutate(inner, 0x61).expect_err("CCO is aliphatic");
         assert_eq!(err, MutatorError::NoEligibleAtom);
     }
 
@@ -145,10 +163,7 @@ mod tests {
         // Cyclohexane has ring atoms but no aromatic bonds.
         let (mut scratch, parsed) = prepared("C1CCCCC1");
         let inner = scratch.prepare(&parsed);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x62);
-        let err = TopologicalPathologyMutator
-            .mutate(inner, &mut rng)
-            .expect_err("cyclohexane has no aromatic bonds");
+        let err = try_mutate(inner, 0x62).expect_err("cyclohexane has no aromatic bonds");
         assert_eq!(err, MutatorError::NoEligibleAtom);
     }
 
@@ -157,10 +172,7 @@ mod tests {
         let (mut scratch, parsed) = prepared("c1ccccc1");
         let inner = scratch.prepare(&parsed);
         let baseline = EcfpFingerprint::new(2, 2048).compute(&inner);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x63);
-        let mutated = TopologicalPathologyMutator
-            .mutate(inner, &mut rng)
-            .expect("mutation should succeed");
+        let mutated = mutate(inner, 0x63);
         let mutated_fp = EcfpFingerprint::new(2, 2048).compute(&mutated);
         assert_ne!(
             baseline.active_bits().collect::<Vec<_>>(),
@@ -187,8 +199,7 @@ mod tests {
         let mut scratch = SmilesRdkitScratch::default();
         let inner = scratch.prepare(&parsed);
 
-        let mut rng = ChaCha8Rng::seed_from_u64(151);
-        let result = TopologicalPathologyMutator.mutate(inner, &mut rng);
+        let result = try_mutate(inner, 151);
         if let Ok(mutated) = result {
             // Whenever the mutator accepts an input, the matching predicate
             // must fire on the output. (If it declines, the regression is

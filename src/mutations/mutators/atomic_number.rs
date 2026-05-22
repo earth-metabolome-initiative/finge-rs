@@ -36,10 +36,12 @@ where
     G: EcfpGraph,
     G::NodeSymbol: MolecularAtom,
 {
-    type Output = InvalidatedGraph<G>;
-
-    fn mutate(&self, graph: G, rng: &mut dyn RngCore) -> Result<Self::Output, MutatorError> {
-        let target = pick_unignored_atom(rng, &graph).ok_or(MutatorError::NoEligibleAtom)?;
+    fn mutate_in_place(
+        &self,
+        wrapper: &mut InvalidatedGraph<G>,
+        rng: &mut dyn RngCore,
+    ) -> Result<(), MutatorError> {
+        let target = pick_unignored_atom(rng, wrapper).ok_or(MutatorError::NoEligibleAtom)?;
 
         let choice = rng.next_u32();
         let span = SUPER_HEAVY_Z_HIGH - SUPER_HEAVY_Z_LOW + 1;
@@ -49,10 +51,10 @@ where
             SUPER_HEAVY_Z_LOW + (choice / 2) % span
         };
 
-        // Defensive: if the inner happens to already carry a violating Z (it
-        // shouldn't for any well-behaved `EcfpGraph` impl), and we'd write the
+        // Defensive: if the wrapper happens to already carry a violating Z
+        // (because a previous composed mutation wrote one), and we'd write the
         // same value, the mutation would be a no-op — bump to the alternate.
-        let current_z = graph.ecfp_atom_invariant_fields(target).atomic_number;
+        let current_z = wrapper.ecfp_atom_invariant_fields(target).atomic_number;
         let override_z = if override_z == current_z {
             if override_z == 0 {
                 SUPER_HEAVY_Z_LOW
@@ -63,9 +65,8 @@ where
             override_z
         };
 
-        let mut wrapper = InvalidatedGraph::new(graph);
         wrapper.set_atomic_number_override(target, override_z);
-        Ok(wrapper)
+        Ok(())
     }
 
     #[inline]
@@ -82,8 +83,8 @@ mod tests {
 
     use super::ImpossibleAtomicNumberMutator;
     use crate::{
-        AtomInvariantFields, EcfpFingerprint, EcfpGraph, Fingerprint, MolecularAtom, Mutator,
-        ViolationClass,
+        AtomInvariantFields, EcfpFingerprint, EcfpGraph, Fingerprint, InvalidatedGraph,
+        MolecularAtom, Mutator, ViolationClass,
         mutations::predicate::{ImpossibleAtomicNumberPredicate, ViolationPredicate},
         smiles_support_impl::SmilesRdkitScratch,
         traits::MolecularGraph as _,
@@ -132,25 +133,37 @@ mod tests {
         );
     }
 
+    fn mutate<'a>(
+        inner: crate::smiles_support_impl::SmilesRdkitGraph<'a>,
+        seed: u64,
+    ) -> InvalidatedGraph<crate::smiles_support_impl::SmilesRdkitGraph<'a>> {
+        let mut wrapper = InvalidatedGraph::new(inner);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        ImpossibleAtomicNumberMutator
+            .mutate_in_place(&mut wrapper, &mut rng)
+            .expect("mutation should succeed");
+        wrapper
+    }
+
     #[test]
     fn mutator_returns_ok_on_real_molecule() {
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
+        let mut wrapper = InvalidatedGraph::new(inner);
         let mut rng = ChaCha8Rng::seed_from_u64(0xCAFE_F00D);
-        let result = ImpossibleAtomicNumberMutator.mutate(inner, &mut rng);
-        assert!(result.is_ok());
+        assert!(
+            ImpossibleAtomicNumberMutator
+                .mutate_in_place(&mut wrapper, &mut rng)
+                .is_ok()
+        );
     }
 
     #[test]
     fn primary_predicate_fires_on_mutated_output() {
         let (mut scratch, parsed) = prepared("CCO");
         let inner = scratch.prepare(&parsed);
-        let mut rng = ChaCha8Rng::seed_from_u64(0x1234_5678);
-        let mutated = ImpossibleAtomicNumberMutator
-            .mutate(inner, &mut rng)
-            .expect("mutation should succeed");
-        let predicate = ImpossibleAtomicNumberPredicate;
-        assert!(predicate.check(&mutated));
+        let mutated = mutate(inner, 0x1234_5678);
+        assert!(ImpossibleAtomicNumberPredicate.check(&mutated));
     }
 
     #[test]
@@ -159,10 +172,7 @@ mod tests {
         let inner = scratch.prepare(&parsed);
         let baseline = EcfpFingerprint::new(2, 2048).compute(&inner);
 
-        let mut rng = ChaCha8Rng::seed_from_u64(0xDEAD_BEEF);
-        let mutated = ImpossibleAtomicNumberMutator
-            .mutate(inner, &mut rng)
-            .expect("mutation should succeed");
+        let mutated = mutate(inner, 0xDEAD_BEEF);
         let mutated_fp = EcfpFingerprint::new(2, 2048).compute(&mutated);
 
         assert_ne!(
@@ -177,10 +187,7 @@ mod tests {
         let inner = scratch.prepare(&parsed);
         let baseline_multiset = atom_field_multiset(&inner);
 
-        let mut rng = ChaCha8Rng::seed_from_u64(0xABCD_EF01);
-        let mutated = ImpossibleAtomicNumberMutator
-            .mutate(inner, &mut rng)
-            .expect("mutation should succeed");
+        let mutated = mutate(inner, 0xABCD_EF01);
         let mutated_multiset = atom_field_multiset(&mutated);
 
         assert_ne!(baseline_multiset, mutated_multiset);
@@ -193,10 +200,7 @@ mod tests {
         for seed in 0..32u64 {
             let (mut scratch, parsed) = prepared("CCO");
             let inner = scratch.prepare(&parsed);
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
-            let mutated = ImpossibleAtomicNumberMutator
-                .mutate(inner, &mut rng)
-                .expect("mutation should succeed");
+            let mutated = mutate(inner, seed);
 
             let mut found_violation = false;
             for atom_id in 0..mutated.atom_count() {
@@ -234,11 +238,12 @@ mod tests {
         let inner = scratch.prepare(&parsed);
         let baseline = CountEcfpFingerprint::new(2, 65_536).compute(&inner);
 
+        let mut wrapper = InvalidatedGraph::new(inner);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        let mutated = ImpossibleAtomicNumberMutator
-            .mutate(inner, &mut rng)
+        ImpossibleAtomicNumberMutator
+            .mutate_in_place(&mut wrapper, &mut rng)
             .expect("mutator returned Err on a fuzz-regression input");
-        let mutated_fp = CountEcfpFingerprint::new(2, 65_536).compute(&mutated);
+        let mutated_fp = CountEcfpFingerprint::new(2, 65_536).compute(&wrapper);
         assert_ne!(
             baseline, mutated_fp,
             "ImpossibleAtomicNumberMutator: ECFP unchanged for {smiles:?} / seed {seed}",
@@ -247,7 +252,7 @@ mod tests {
 
     #[test]
     fn mutator_returns_no_eligible_atom_when_all_atoms_ignored() {
-        use crate::{InvalidatedGraph, MutatorError};
+        use crate::MutatorError;
         // Synthesise an "all atoms ignored" graph by wrapping CCO and
         // forcing every `ecfp_atom_is_ignored` override to true. The
         // outer mutator sees an `EcfpGraph` where no atom is eligible.
@@ -259,7 +264,7 @@ mod tests {
         }
         let mut rng = ChaCha8Rng::seed_from_u64(0);
         let err = ImpossibleAtomicNumberMutator
-            .mutate(all_ignored, &mut rng)
+            .mutate_in_place(&mut all_ignored, &mut rng)
             .expect_err("every atom is ignored; mutator should decline");
         assert_eq!(err, MutatorError::NoEligibleAtom);
     }
