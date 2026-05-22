@@ -648,6 +648,84 @@ mod tests {
     }
 
     #[test]
+    fn wrapper_delegates_every_trait_method_to_inner() {
+        // Exercises the small `#[inline]` delegations on Graph, MonoplexGraph,
+        // MonopartiteGraph, MolecularGraph, AtomPairGraph,
+        // TopologicalTorsionGraph, and RdkFingerprintGraph that the larger
+        // fingerprint-roundtrip test only touches transitively.
+        use geometric_traits::traits::{Graph, MonopartiteGraph, MonoplexGraph};
+
+        use crate::traits::{AtomPairGraph, RdkFingerprintGraph, TopologicalTorsionGraph};
+
+        let (mut scratch, parsed) = prepared("c1ccccc1O");
+        let inner = scratch.prepare(&parsed);
+        let wrapper = InvalidatedGraph::new(inner);
+
+        assert_eq!(
+            <InvalidatedGraph<_> as Graph>::has_nodes(&wrapper),
+            inner.has_nodes()
+        );
+        assert_eq!(
+            <InvalidatedGraph<_> as Graph>::has_edges(&wrapper),
+            inner.has_edges()
+        );
+        assert!(core::ptr::eq(
+            <InvalidatedGraph<_> as MonoplexGraph>::edges(&wrapper) as *const _,
+            inner.edges() as *const _,
+        ));
+        assert!(core::ptr::eq(
+            <InvalidatedGraph<_> as MonopartiteGraph>::nodes_vocabulary(&wrapper) as *const _,
+            inner.nodes_vocabulary() as *const _,
+        ));
+        // MolecularGraph::atom delegation (returns Option<&Atom>).
+        let inner_atom = inner.atom(0);
+        let wrapped_atom = MolecularGraph::atom(&wrapper, 0);
+        assert_eq!(inner_atom.is_some(), wrapped_atom.is_some());
+
+        // AtomPairGraph, TopologicalTorsionGraph, RdkFingerprintGraph
+        // delegations — sanity-check that each wrapper method returns the
+        // same scalar/bool as the inner.
+        for atom_id in 0..inner.atom_count() {
+            assert_eq!(
+                wrapper.atom_pair_atom_code(atom_id),
+                inner.atom_pair_atom_code(atom_id),
+            );
+            assert_eq!(
+                wrapper.topological_torsion_atom_is_hydrogen(atom_id),
+                inner.topological_torsion_atom_is_hydrogen(atom_id),
+            );
+            assert_eq!(
+                wrapper.topological_torsion_atom_code(atom_id, 0),
+                inner.topological_torsion_atom_code(atom_id, 0),
+            );
+            assert_eq!(
+                wrapper.rdk_atom_is_hydrogen(atom_id),
+                inner.rdk_atom_is_hydrogen(atom_id),
+            );
+            assert_eq!(
+                wrapper.rdk_atom_is_collapsible_hydrogen(atom_id),
+                inner.rdk_atom_is_collapsible_hydrogen(atom_id),
+            );
+        }
+    }
+
+    #[test]
+    fn ecfp_atom_is_ignored_falls_through_to_inner_when_no_override() {
+        // Specifically exercises the `None` arm of the override match in
+        // `ecfp_atom_is_ignored`.
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+        let wrapper = InvalidatedGraph::new(inner);
+        // No overrides set => every atom delegates to inner.
+        for atom_id in 0..wrapper.atom_count() {
+            assert_eq!(
+                wrapper.ecfp_atom_is_ignored(atom_id),
+                inner.ecfp_atom_is_ignored(atom_id),
+            );
+        }
+    }
+
+    #[test]
     fn atom_field_override_apply_replaces_only_specified_channels() {
         let base = AtomInvariantFields {
             atomic_number: 6,

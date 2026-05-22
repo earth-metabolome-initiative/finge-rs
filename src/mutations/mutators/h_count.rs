@@ -73,11 +73,12 @@ mod tests {
 
     use super::ImpossibleHCountMutator;
     use crate::{
-        EcfpFingerprint, Fingerprint, InvalidatedGraph, Mutator, ViolationClass,
+        EcfpFingerprint, EcfpGraph, Fingerprint, InvalidatedGraph, Mutator, ViolationClass,
         mutations::predicate::{
             ImpossibleHCountPredicate, ViolationPredicate, has_impossible_hydrogen_count,
         },
         smiles_support_impl::SmilesRdkitScratch,
+        traits::MolecularGraph as _,
     };
 
     fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_parser::smiles::Smiles) {
@@ -157,6 +158,37 @@ mod tests {
             .expect("mutator returned Err on a fuzz-regression input");
         let mutated_fp = CountEcfpFingerprint::new(2, 65_536).compute(&wrapper);
         assert_ne!(baseline, mutated_fp);
+    }
+
+    #[test]
+    fn override_nudges_off_pre_existing_collision() {
+        // Same deterministic-collision trick as `HypervalentMutator`: run
+        // once to learn the RNG-chosen override, then re-run with that value
+        // pre-set so the adjustment branch fires.
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+
+        let mut probe = InvalidatedGraph::new(inner);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xC011_5104);
+        ImpossibleHCountMutator
+            .mutate_in_place(&mut probe, &mut rng)
+            .expect("probe mutation should succeed");
+        let target = (0..probe.atom_count())
+            .find(|&id| probe.atom_field_override(id).is_some())
+            .expect("probe should have written one override");
+        let first_value = probe.ecfp_atom_invariant_fields(target).total_hydrogens;
+
+        let mut wrapper = InvalidatedGraph::new(inner);
+        wrapper.set_total_hydrogens_override(target, first_value);
+        let mut rng2 = ChaCha8Rng::seed_from_u64(0xC011_5104);
+        ImpossibleHCountMutator
+            .mutate_in_place(&mut wrapper, &mut rng2)
+            .expect("collision-rerun mutation should succeed");
+        let second_value = wrapper.ecfp_atom_invariant_fields(target).total_hydrogens;
+        assert_ne!(
+            second_value, first_value,
+            "override-equals-current branch must have nudged the value off",
+        );
     }
 
     #[test]

@@ -676,6 +676,61 @@ mod tests {
     }
 
     #[test]
+    fn with_composition_lambda_accepts_finite_non_negative() {
+        // Default lambda is 0.7. Bumping it to 1.5 shifts the CDF rightward.
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();
+        let cdf_default = mix.k_cumulative;
+        let mix_high = mix.with_composition_lambda(1.5);
+        let cdf_high = mix_high.k_cumulative;
+        assert!(
+            cdf_high[0] < cdf_default[0],
+            "higher lambda must shift weight off the k=1 slot",
+        );
+    }
+
+    #[test]
+    fn with_composition_lambda_clamps_negative_to_zero() {
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::new().with_composition_lambda(-1.0);
+        // Negative lambda is clamped to 0, putting all mass on k=1.
+        assert_eq!(mix.k_cumulative[0], 1.0);
+    }
+
+    #[test]
+    fn with_composition_lambda_clamps_nan_to_zero() {
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::new().with_composition_lambda(f64::NAN);
+        assert_eq!(mix.k_cumulative[0], 1.0);
+    }
+
+    #[test]
+    fn with_retry_per_slot_updates_field() {
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::new().with_retry_per_slot(7);
+        assert_eq!(mix.retry_per_slot(), 7);
+    }
+
+    #[test]
+    fn sample_returns_err_when_every_slot_exhausts_retries() {
+        // A mix whose only mutator declines every input must yield Err
+        // (no slot ever succeeded), exercising the `if !applied_any` path.
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::new()
+            .add_mutator(
+                alloc::boxed::Box::new(crate::TopologicalPathologyMutator),
+                1.0,
+            )
+            .with_k_max(2)
+            .with_retry_per_slot(2);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xDEAF_BEAD);
+        let err = mix
+            .sample(inner, &mut rng)
+            .expect_err("aliphatic input with topology-only mix must Err");
+        assert!(matches!(
+            err,
+            MutatorError::NoEligibleAtom | MutatorError::GraphTooSmall,
+        ));
+    }
+
+    #[test]
     fn retry_recovers_from_initial_slot_failure() {
         // A mix with only the TopologicalPathologyMutator declines aliphatic
         // CCO every time. With retry_per_slot = 0 we must get Err; with the

@@ -76,9 +76,10 @@ mod tests {
 
     use super::HypervalentMutator;
     use crate::{
-        EcfpFingerprint, Fingerprint, InvalidatedGraph, Mutator, ViolationClass,
+        EcfpFingerprint, EcfpGraph, Fingerprint, InvalidatedGraph, Mutator, ViolationClass,
         mutations::predicate::{HypervalentPredicate, ViolationPredicate, is_hypervalent},
         smiles_support_impl::SmilesRdkitScratch,
+        traits::MolecularGraph as _,
     };
 
     fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_parser::smiles::Smiles) {
@@ -172,6 +173,39 @@ mod tests {
             .mutate_in_place(&mut all_ignored, &mut rng)
             .expect_err("every atom is ignored; mutator should decline");
         assert_eq!(err, MutatorError::NoEligibleAtom);
+    }
+
+    #[test]
+    fn override_nudges_off_pre_existing_collision() {
+        // Engineer a deterministic collision: first run the mutator on a
+        // fresh wrapper to discover what override the RNG produces, then
+        // re-run with the same seed against a wrapper whose total_degree
+        // is pre-set to that exact value. The RNG draws are identical, so
+        // the override-equals-current branch must fire and nudge the value.
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+
+        let mut probe = InvalidatedGraph::new(inner);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xC011_5104);
+        HypervalentMutator
+            .mutate_in_place(&mut probe, &mut rng)
+            .expect("probe mutation should succeed");
+        let target = (0..probe.atom_count())
+            .find(|&id| probe.atom_field_override(id).is_some())
+            .expect("probe should have written one override");
+        let first_value = probe.ecfp_atom_invariant_fields(target).total_degree;
+
+        let mut wrapper = InvalidatedGraph::new(inner);
+        wrapper.set_total_degree_override(target, first_value);
+        let mut rng2 = ChaCha8Rng::seed_from_u64(0xC011_5104);
+        HypervalentMutator
+            .mutate_in_place(&mut wrapper, &mut rng2)
+            .expect("collision-rerun mutation should succeed");
+        let second_value = wrapper.ecfp_atom_invariant_fields(target).total_degree;
+        assert_ne!(
+            second_value, first_value,
+            "override-equals-current branch must have nudged the value off",
+        );
     }
 
     #[test]

@@ -70,11 +70,12 @@ mod tests {
 
     use super::ImpossibleIsotopeMutator;
     use crate::{
-        EcfpFingerprint, Fingerprint, InvalidatedGraph, Mutator, ViolationClass,
+        EcfpFingerprint, EcfpGraph, Fingerprint, InvalidatedGraph, Mutator, ViolationClass,
         mutations::predicate::{
             ImpossibleIsotopePredicate, ViolationPredicate, has_impossible_isotope,
         },
         smiles_support_impl::SmilesRdkitScratch,
+        traits::MolecularGraph as _,
     };
 
     fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_parser::smiles::Smiles) {
@@ -112,6 +113,37 @@ mod tests {
         let mutated = mutate(inner, 0x30);
         assert!(ImpossibleIsotopePredicate.check(&mutated));
         assert!(has_impossible_isotope(&mutated));
+    }
+
+    #[test]
+    fn override_nudges_off_pre_existing_collision() {
+        // Same deterministic-collision trick as `HypervalentMutator`: run
+        // once to learn the RNG-chosen delta_mass, then re-run with that
+        // value pre-set so the adjustment branch (negation) fires.
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+
+        let mut probe = InvalidatedGraph::new(inner);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xC011_5104);
+        ImpossibleIsotopeMutator
+            .mutate_in_place(&mut probe, &mut rng)
+            .expect("probe mutation should succeed");
+        let target = (0..probe.atom_count())
+            .find(|&id| probe.atom_field_override(id).is_some())
+            .expect("probe should have written one override");
+        let first_value = probe.ecfp_atom_invariant_fields(target).delta_mass;
+
+        let mut wrapper = InvalidatedGraph::new(inner);
+        wrapper.set_delta_mass_override(target, first_value);
+        let mut rng2 = ChaCha8Rng::seed_from_u64(0xC011_5104);
+        ImpossibleIsotopeMutator
+            .mutate_in_place(&mut wrapper, &mut rng2)
+            .expect("collision-rerun mutation should succeed");
+        let second_value = wrapper.ecfp_atom_invariant_fields(target).delta_mass;
+        assert_ne!(
+            second_value, first_value,
+            "override-equals-current branch must have negated the delta_mass",
+        );
     }
 
     #[test]
