@@ -1,6 +1,14 @@
 //! [`MutatorMix`] — weighted-random sampler over a collection of mutators
-//! that also computes the multi-label [`ViolationLabel`] for each generated
-//! negative.
+//! that composes 1..=K mutations per draw and labels the result by running
+//! every registered predicate against the final wrapper.
+//!
+//! The number of mutations per sample is `k = 1 + Poisson(λ)` clamped to
+//! `[1, k_max]`. Defaults: `λ = 0.7`, `k_max = 4`. Each slot draws a mutator
+//! independently by weight (with replacement, so the same mutator can fire
+//! several times on different atoms). The composed wrapper is then scored
+//! against every predicate, producing a multi-label [`ViolationLabel`] that
+//! reflects what actually fired — not just the primary class of whatever
+//! mutators happened to be sampled.
 
 use alloc::{boxed::Box, vec::Vec};
 
@@ -28,6 +36,25 @@ use crate::{
 /// One entry in the mix: a mutator and its sampling weight.
 type WeightedMutator<'mix, G> = (Box<dyn Mutator<G> + 'mix>, f32);
 
+/// Default Poisson rate λ for the `k = 1 + Poisson(λ)` count of mutations
+/// per sample. With λ = 0.7 the discrete distribution over k is roughly
+/// `{1: 0.50, 2: 0.35, 3: 0.12, ≥4: 0.03}` — most samples are still
+/// single-mutation, but ~50 % have at least two co-firing mutators.
+pub const DEFAULT_COMPOSITION_LAMBDA: f64 = 0.7;
+
+/// Default upper bound on the number of mutations composed per sample.
+pub const DEFAULT_K_MAX: u8 = 4;
+
+/// Default number of times a slot is retried after a mutator returns Err
+/// (e.g. `TopologicalPathologyMutator` on an aliphatic graph). Each retry
+/// draws a fresh mutator by weight, so the worst case for a 4-slot sample
+/// is `4 * (1 + 3) = 16` mutator invocations.
+pub const DEFAULT_RETRY_PER_SLOT: u8 = 3;
+
+/// Maximum number of slots the cumulative CDF holds. Constraints: `k_max`
+/// cannot exceed this without resizing `k_cumulative`.
+pub const K_MAX_LIMIT: u8 = 8;
+
 /// Weighted-random sampler over a configurable set of mutators plus a fixed
 /// list of predicates that label each generated negative.
 ///
@@ -37,14 +64,16 @@ type WeightedMutator<'mix, G> = (Box<dyn Mutator<G> + 'mix>, f32);
 /// and [`MutatorMix::add_predicate`].
 ///
 /// Sampling:
-/// 1. Pick a mutator by weight.
-/// 2. Apply it to the input graph.
-/// 3. Run every predicate on the resulting wrapper and OR the hits into a
-///    [`ViolationLabel`].
+/// 1. Draw `k = 1 + Poisson(λ)` clamped to `[1, k_max]`.
+/// 2. For each of `k` slots: pick a mutator by weight and call
+///    [`Mutator::mutate_in_place`] on a shared [`InvalidatedGraph`]. Retry
+///    up to `retry_per_slot` times on `Err`, then move on.
+/// 3. Run every registered predicate against the final wrapper and OR the
+///    hits into a [`ViolationLabel`]. The returned label is ground truth —
+///    it reflects *what actually fired*, not which mutators were sampled.
 ///
-/// `sample()` returns `Err` when the chosen mutator declines the input. The
-/// caller is expected to retry with another input (or, if iterating a fixed
-/// corpus, simply skip and move on).
+/// Slots that all fail their retries are skipped silently. `sample()` returns
+/// `Err` only when *every* slot failed (no mutation was applied at all).
 ///
 /// The `'mix` lifetime parameter lets the mix carry mutators / predicates
 /// that borrow data shorter than `'static` (e.g. when the graph type `G`
@@ -55,6 +84,17 @@ where
 {
     mutators: Vec<WeightedMutator<'mix, G>>,
     predicates: Vec<Box<dyn ViolationPredicate<InvalidatedGraph<G>> + 'mix>>,
+    /// Cumulative density function for `k` slots per sample. `k_cumulative[i]`
+    /// holds `P(k <= i + 1)`. Always normalised so the last active entry is
+    /// `1.0`; unused tail entries (beyond `k_max`) are `1.0` as well.
+    k_cumulative: [f32; K_MAX_LIMIT as usize],
+    /// Poisson rate cached so `with_k_max` can recompute the CDF without
+    /// inverting it.
+    composition_lambda: f64,
+    /// Upper bound on the number of mutations per sample.
+    k_max: u8,
+    /// Per-slot retry budget when a sampled mutator returns Err.
+    retry_per_slot: u8,
 }
 
 impl<G> Default for MutatorMix<'_, G>
@@ -73,13 +113,19 @@ where
     G: EcfpGraph,
     G::NodeSymbol: MolecularAtom,
 {
-    /// Creates an empty mix.
+    /// Creates an empty mix with the default composition policy
+    /// (`λ = DEFAULT_COMPOSITION_LAMBDA`, `k_max = DEFAULT_K_MAX`,
+    /// `retry_per_slot = DEFAULT_RETRY_PER_SLOT`).
     #[inline]
     #[must_use]
     pub fn new() -> Self {
         Self {
             mutators: Vec::new(),
             predicates: Vec::new(),
+            k_cumulative: poisson_k_cumulative(DEFAULT_COMPOSITION_LAMBDA, DEFAULT_K_MAX),
+            composition_lambda: DEFAULT_COMPOSITION_LAMBDA,
+            k_max: DEFAULT_K_MAX,
+            retry_per_slot: DEFAULT_RETRY_PER_SLOT,
         }
     }
 
@@ -160,6 +206,58 @@ where
         self
     }
 
+    /// Sets the Poisson rate `λ` of the `k = 1 + Poisson(λ)` slot count.
+    ///
+    /// Negative or non-finite values are clamped to `0.0` (every sample
+    /// becomes `k = 1`).
+    #[inline]
+    #[must_use]
+    pub fn with_composition_lambda(mut self, lambda: f64) -> Self {
+        let lambda = if lambda.is_finite() {
+            lambda.max(0.0)
+        } else {
+            0.0
+        };
+        self.composition_lambda = lambda;
+        self.k_cumulative = poisson_k_cumulative(lambda, self.k_max);
+        self
+    }
+
+    /// Sets the upper bound on the number of mutations composed per sample.
+    ///
+    /// `k_max = 0` is treated as `1` (every sample produces at least one
+    /// mutation). Values above [`K_MAX_LIMIT`] are clamped.
+    #[inline]
+    #[must_use]
+    pub fn with_k_max(mut self, k_max: u8) -> Self {
+        let k_max = k_max.clamp(1, K_MAX_LIMIT);
+        self.k_max = k_max;
+        self.k_cumulative = poisson_k_cumulative(self.composition_lambda, k_max);
+        self
+    }
+
+    /// Sets the per-slot retry budget after a mutator returns Err.
+    #[inline]
+    #[must_use]
+    pub fn with_retry_per_slot(mut self, retry: u8) -> Self {
+        self.retry_per_slot = retry;
+        self
+    }
+
+    /// Returns the configured `k_max`.
+    #[inline]
+    #[must_use]
+    pub fn k_max(&self) -> u8 {
+        self.k_max
+    }
+
+    /// Returns the configured per-slot retry budget.
+    #[inline]
+    #[must_use]
+    pub fn retry_per_slot(&self) -> u8 {
+        self.retry_per_slot
+    }
+
     /// Returns the number of registered mutators.
     #[inline]
     #[must_use]
@@ -176,13 +274,18 @@ where
 
     /// Draws one labelled negative from the mix.
     ///
+    /// Composes `k = 1 + Poisson(λ)` clamped to `[1, k_max]` mutations on a
+    /// shared wrapper, retrying each slot up to [`retry_per_slot`] times when
+    /// the sampled mutator declines, then runs every registered predicate
+    /// against the final wrapper to derive the [`ViolationLabel`].
+    ///
+    /// [`retry_per_slot`]: MutatorMix::retry_per_slot
+    ///
     /// # Errors
     ///
-    /// Returns [`MutatorError`] from the chosen mutator. Common reasons:
-    /// [`MutatorError::GraphTooSmall`] for empty input;
-    /// [`MutatorError::NoEligibleAtom`] / [`MutatorError::NoEligibleBond`]
-    /// when the mutator can't find a target (e.g. the topological-pathology
-    /// mutator on an aliphatic molecule).
+    /// Returns [`MutatorError`] from the *last* failed slot only when every
+    /// slot's retries were exhausted (no mutation was applied at all). When
+    /// the mix is empty, returns [`MutatorError::NoEligibleAtom`].
     pub fn sample(
         &self,
         graph: G,
@@ -191,14 +294,30 @@ where
         if self.mutators.is_empty() {
             return Err(MutatorError::NoEligibleAtom);
         }
-        let index = self.pick_mutator_index(rng);
-        let mutator = self
-            .mutators
-            .get(index)
-            .map(|(m, _)| m.as_ref())
-            .ok_or(MutatorError::NoEligibleAtom)?;
         let mut wrapper = InvalidatedGraph::new(graph);
-        mutator.mutate_in_place(&mut wrapper, rng)?;
+        let k = self.pick_k(rng);
+
+        let mut applied_any = false;
+        let mut last_err = MutatorError::NoEligibleAtom;
+        for _ in 0..k {
+            for _attempt in 0..=self.retry_per_slot {
+                let index = self.pick_mutator_index(rng);
+                // `pick_mutator_index` always returns a valid index because
+                // we checked `self.mutators.is_empty()` above.
+                let mutator = self.mutators[index].0.as_ref();
+                match mutator.mutate_in_place(&mut wrapper, rng) {
+                    Ok(()) => {
+                        applied_any = true;
+                        break;
+                    }
+                    Err(err) => last_err = err,
+                }
+            }
+        }
+
+        if !applied_any {
+            return Err(last_err);
+        }
 
         let mut label = ViolationLabel::empty();
         for predicate in &self.predicates {
@@ -228,13 +347,91 @@ where
         }
         self.mutators.len() - 1
     }
+
+    /// Draws `k` slots for the current sample. Always returns at least `1`
+    /// and at most `self.k_max`.
+    fn pick_k(&self, rng: &mut dyn RngCore) -> u8 {
+        let u = ((rng.next_u32() >> 8) as f32) / ((1u32 << 24) as f32);
+        for (i, &threshold) in self.k_cumulative.iter().enumerate() {
+            if u < threshold {
+                return (i as u8 + 1).min(self.k_max);
+            }
+        }
+        self.k_max
+    }
+}
+
+/// Computes `exp(-x)` for non-negative `x` via Taylor series at 0.
+///
+/// Used to build the Poisson PMF without pulling in `libm`. Converges to
+/// double-precision for `x ≤ 5` within ~25 terms; we always sample
+/// `lambda ≤ ~3` so this is comfortably accurate.
+fn exp_neg(x: f64) -> f64 {
+    let neg = -x;
+    let mut sum = 1.0_f64;
+    let mut term = 1.0_f64;
+    for n in 1..=40 {
+        term *= neg / (n as f64);
+        sum += term;
+    }
+    sum
+}
+
+/// Returns the cumulative distribution function of `k = 1 + Poisson(lambda)`
+/// truncated and renormalised to `[1, k_max]`. `result[i]` is `P(k <= i + 1)`
+/// for `i < k_max`; all tail entries are `1.0`.
+fn poisson_k_cumulative(lambda: f64, k_max: u8) -> [f32; K_MAX_LIMIT as usize] {
+    let mut cdf = [1.0_f32; K_MAX_LIMIT as usize];
+    if k_max == 0 {
+        return cdf;
+    }
+    let e = exp_neg(lambda);
+    // pmf[j] holds P(Poisson(lambda) = j) for j in 0..k_max.
+    let mut pmf = [0.0_f64; K_MAX_LIMIT as usize];
+    let mut term = e;
+    pmf[0] = term;
+    let head_len = (k_max as usize).min(K_MAX_LIMIT as usize);
+    for (j, slot) in pmf.iter_mut().enumerate().take(head_len).skip(1) {
+        term *= lambda / (j as f64);
+        *slot = term;
+    }
+    // Collapse the tail `P(Poisson >= k_max - 1)` into the last entry so the
+    // resulting CDF sums to exactly 1.
+    let head_sum: f64 = pmf
+        .iter()
+        .take((k_max as usize).saturating_sub(1))
+        .copied()
+        .sum();
+    let tail = (1.0 - head_sum).max(0.0);
+    if let Some(last) = pmf.get_mut((k_max as usize).saturating_sub(1)) {
+        *last = tail;
+    }
+    let mut acc = 0.0_f64;
+    for (i, slot) in cdf.iter_mut().enumerate() {
+        if i < k_max as usize {
+            acc += pmf[i];
+            *slot = (acc.min(1.0)) as f32;
+        } else {
+            *slot = 1.0;
+        }
+    }
+    // Final guard: floating-point drift could leave the last active entry a
+    // hair below 1.0, which would cause `pick_k` to return `k_max` even when
+    // unintended. Pinning eliminates that ambiguity.
+    if k_max as usize <= K_MAX_LIMIT as usize {
+        cdf[k_max as usize - 1] = 1.0;
+    }
+    cdf
 }
 
 #[cfg(test)]
 mod tests {
     use rand_chacha::{ChaCha8Rng, rand_core::SeedableRng};
 
-    use super::MutatorMix;
+    use super::{
+        DEFAULT_COMPOSITION_LAMBDA, DEFAULT_K_MAX, DEFAULT_RETRY_PER_SLOT, K_MAX_LIMIT, MutatorMix,
+        poisson_k_cumulative,
+    };
     use crate::{
         MutatorError, ViolationClass, ViolationLabel,
         smiles_support_impl::{SmilesRdkitGraph, SmilesRdkitScratch},
@@ -385,6 +582,132 @@ mod tests {
         assert!(
             result.is_ok(),
             "all-zero-weight fallback must still pick a mutator: {result:?}",
+        );
+    }
+
+    #[test]
+    fn poisson_cumulative_matches_hand_computed_values_for_default_lambda() {
+        // For lambda = 0.7, k_max = 4:
+        //   P(Poisson=0) = exp(-0.7)               ≈ 0.4966
+        //   P(Poisson=1) = 0.7 * exp(-0.7)         ≈ 0.3476
+        //   P(Poisson=2) = 0.49 * exp(-0.7) / 2    ≈ 0.1217
+        //   tail (>=3) collapsed into slot 3        ≈ 0.0341
+        // CDF: [0.4966, 0.8442, 0.9659, 1.0000, 1.0, 1.0, 1.0, 1.0]
+        let cdf = poisson_k_cumulative(DEFAULT_COMPOSITION_LAMBDA, DEFAULT_K_MAX);
+        let expected = [0.4966_f32, 0.8442, 0.9659, 1.0000, 1.0, 1.0, 1.0, 1.0];
+        for (i, (got, want)) in cdf.iter().zip(expected.iter()).enumerate() {
+            assert!((got - want).abs() < 1e-3, "cdf[{i}] = {got}, want ≈ {want}",);
+        }
+    }
+
+    #[test]
+    fn poisson_cumulative_handles_zero_lambda_as_always_one_slot() {
+        let cdf = poisson_k_cumulative(0.0, DEFAULT_K_MAX);
+        assert_eq!(cdf[0], 1.0, "lambda=0 must put all mass on k=1");
+    }
+
+    #[test]
+    fn default_config_matches_documented_constants() {
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();
+        assert_eq!(mix.k_max(), DEFAULT_K_MAX);
+        assert_eq!(mix.retry_per_slot(), DEFAULT_RETRY_PER_SLOT);
+    }
+
+    #[test]
+    fn with_k_max_clamps_within_limit() {
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::new().with_k_max(255);
+        assert_eq!(mix.k_max(), K_MAX_LIMIT);
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::new().with_k_max(0);
+        assert_eq!(mix.k_max(), 1);
+    }
+
+    #[test]
+    fn composed_samples_include_multi_bit_labels() {
+        // With lambda = 0.7 and k_max = 4 roughly half of all samples have
+        // k >= 2. Across 200 samples we expect at least a handful with two
+        // or more bits set. (At k = 1 each sample is single-bit by
+        // construction except in the rare cases where two predicates fire
+        // on the same atom; with composition, multi-bit labels become the
+        // common case.)
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();
+        let mut rng = ChaCha8Rng::seed_from_u64(0x0C01_1EC7);
+        let mut multi_bit = 0;
+        let mut single_bit = 0;
+        for _ in 0..200 {
+            if let Ok((_, label)) = mix.sample(inner, &mut rng) {
+                if label.count() >= 2 {
+                    multi_bit += 1;
+                } else if label.count() == 1 {
+                    single_bit += 1;
+                }
+            }
+        }
+        assert!(
+            multi_bit >= 20,
+            "expected >= 20 multi-bit labels out of 200, got {multi_bit} \
+             (single-bit: {single_bit})",
+        );
+    }
+
+    #[test]
+    fn with_k_max_one_collapses_to_single_mutation_per_sample() {
+        // With k_max = 1, every sample applies exactly one mutation.
+        // Therefore at most one bit can be set per label (modulo
+        // secondary predicate hits — rare on CCO).
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates()
+            .with_k_max(1);
+        let mut rng = ChaCha8Rng::seed_from_u64(0x5111_E0E1);
+        let mut multi_bit = 0;
+        for _ in 0..50 {
+            if let Ok((_, label)) = mix.sample(inner, &mut rng) {
+                if label.count() >= 3 {
+                    multi_bit += 1;
+                }
+            }
+        }
+        assert_eq!(
+            multi_bit, 0,
+            "k_max=1 must never produce >=3 simultaneously firing predicates",
+        );
+    }
+
+    #[test]
+    fn retry_recovers_from_initial_slot_failure() {
+        // A mix with only the TopologicalPathologyMutator declines aliphatic
+        // CCO every time. With retry_per_slot = 0 we must get Err; with the
+        // default budget we still get Err (retries draw the same mutator
+        // again), but with a second mutator added at non-zero weight the
+        // retry path eventually picks one that can fire.
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::new()
+            .add_mutator(
+                alloc::boxed::Box::new(crate::TopologicalPathologyMutator),
+                1.0,
+            )
+            .add_mutator(
+                alloc::boxed::Box::new(crate::ImpossibleAtomicNumberMutator),
+                1.0,
+            )
+            .add_predicate(alloc::boxed::Box::new(
+                crate::ImpossibleAtomicNumberPredicate,
+            ))
+            .with_k_max(1);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xDEAD_BEEF);
+        let mut successes = 0;
+        for _ in 0..50 {
+            if mix.sample(inner, &mut rng).is_ok() {
+                successes += 1;
+            }
+        }
+        assert!(
+            successes >= 25,
+            "retry must let the always-succeeding mutator rescue at least \
+             half of samples; got {successes}/50",
         );
     }
 }
