@@ -15,6 +15,8 @@ use alloc::{boxed::Box, vec::Vec};
 use rand_core::RngCore;
 
 use crate::{
+    Fingerprint,
+    fingerprints::CountEcfpFingerprint,
     mutations::{
         invalidated_graph::InvalidatedGraph,
         mutator::{Mutator, MutatorError},
@@ -30,7 +32,7 @@ use crate::{
         },
         violation_class::ViolationLabel,
     },
-    traits::{EcfpGraph, MolecularAtom},
+    traits::{EcfpGraph, MolecularAtom, MolecularBond},
 };
 
 /// One entry in the mix: a mutator and its sampling weight.
@@ -95,6 +97,12 @@ where
     k_max: u8,
     /// Per-slot retry budget when a sampled mutator returns Err.
     retry_per_slot: u8,
+    /// If set, [`Self::sample`] computes the count-ECFP fingerprint at the
+    /// stored `(radius, fp_size)` for both the baseline and the mutated
+    /// wrapper, returning [`MutatorError::FingerprintCollision`] when they
+    /// are byte-equal. Lets the caller pin the trainer's chosen `fp_size`
+    /// and skip samples whose perturbation is invisible to the model.
+    collision_filter: Option<(u8, usize)>,
 }
 
 impl<G> Default for MutatorMix<'_, G>
@@ -115,7 +123,7 @@ where
 {
     /// Creates an empty mix with the default composition policy
     /// (`λ = DEFAULT_COMPOSITION_LAMBDA`, `k_max = DEFAULT_K_MAX`,
-    /// `retry_per_slot = DEFAULT_RETRY_PER_SLOT`).
+    /// `retry_per_slot = DEFAULT_RETRY_PER_SLOT`) and no collision filter.
     #[inline]
     #[must_use]
     pub fn new() -> Self {
@@ -126,6 +134,7 @@ where
             composition_lambda: DEFAULT_COMPOSITION_LAMBDA,
             k_max: DEFAULT_K_MAX,
             retry_per_slot: DEFAULT_RETRY_PER_SLOT,
+            collision_filter: None,
         }
     }
 
@@ -244,6 +253,40 @@ where
         self
     }
 
+    /// Enables ECFP-collision filtering at the given `(radius, fp_size)`.
+    ///
+    /// When set, every successful [`Self::sample`] call additionally
+    /// computes a count-ECFP fingerprint for the baseline and for the
+    /// mutated wrapper and returns
+    /// [`MutatorError::FingerprintCollision`] if the two fold to byte-equal
+    /// bins. Use this with the trainer's chosen `fp_size` to ensure every
+    /// returned sample carries a feature-space signal at the size the
+    /// model will actually see.
+    ///
+    /// Adds one extra `CountEcfpFingerprint::compute` per sample.
+    #[inline]
+    #[must_use]
+    pub fn with_collision_filter(mut self, radius: u8, fp_size: usize) -> Self {
+        self.collision_filter = Some((radius, fp_size));
+        self
+    }
+
+    /// Disables the collision filter previously set via
+    /// [`Self::with_collision_filter`].
+    #[inline]
+    #[must_use]
+    pub fn without_collision_filter(mut self) -> Self {
+        self.collision_filter = None;
+        self
+    }
+
+    /// Returns the active collision-filter `(radius, fp_size)` if set.
+    #[inline]
+    #[must_use]
+    pub fn collision_filter(&self) -> Option<(u8, usize)> {
+        self.collision_filter
+    }
+
     /// Returns the configured `k_max`.
     #[inline]
     #[must_use]
@@ -287,16 +330,28 @@ where
     /// retries were exhausted (no mutation was applied at all). Returns
     /// [`MutatorError::CompositionCancelled`] when mutations were applied but
     /// later writes on the same atom-channel clobbered earlier ones, leaving
-    /// the wrapper pre-hash-identical to the inner. When the mix is empty,
-    /// returns [`MutatorError::NoEligibleAtom`].
+    /// the wrapper pre-hash-identical to the inner. Returns
+    /// [`MutatorError::FingerprintCollision`] when the collision filter is
+    /// enabled and the wrapper's folded ECFP equals the baseline's. When
+    /// the mix is empty, returns [`MutatorError::NoEligibleAtom`].
     pub fn sample(
         &self,
         graph: G,
         rng: &mut dyn RngCore,
-    ) -> Result<(InvalidatedGraph<G>, ViolationLabel), MutatorError> {
+    ) -> Result<(InvalidatedGraph<G>, ViolationLabel), MutatorError>
+    where
+        G: EcfpGraph<NodeId = usize>,
+        G::Bond: MolecularBond<NodeId = usize>,
+    {
         if self.mutators.is_empty() {
             return Err(MutatorError::NoEligibleAtom);
         }
+        // Compute the baseline fingerprint up-front when collision filtering
+        // is enabled. Done before the graph is consumed by
+        // `InvalidatedGraph::new` so we don't need a Clone bound on G.
+        let baseline_fp = self
+            .collision_filter
+            .map(|(radius, fp_size)| CountEcfpFingerprint::new(radius, fp_size).compute(&graph));
         let mut wrapper = InvalidatedGraph::new(graph);
         let k = self.pick_k(rng);
 
@@ -332,6 +387,20 @@ where
         // state of `in_ring=false`).
         if !wrapper.has_effective_perturbation() {
             return Err(MutatorError::CompositionCancelled);
+        }
+
+        // Reject samples where the perturbation is invisible to the trainer's
+        // chosen fp_size. Atoms whose post-override invariants happen to fold
+        // to the same bins as the baseline (e.g. atom 2 of BrOBr coinciding
+        // with the unchanged atom 0 in the 65 536-bin fold) produce a wrapper
+        // whose ECFP is byte-equal to the baseline — useless as a labelled
+        // negative for the model. The trainer pins the fp_size via
+        // `with_collision_filter`; we re-fingerprint and compare here.
+        if let Some((radius, fp_size)) = self.collision_filter {
+            let wrapper_fp = CountEcfpFingerprint::new(radius, fp_size).compute(&wrapper);
+            if Some(&wrapper_fp) == baseline_fp.as_ref() {
+                return Err(MutatorError::FingerprintCollision);
+            }
         }
 
         let mut label = ViolationLabel::empty();
@@ -743,6 +812,59 @@ mod tests {
             err,
             MutatorError::NoEligibleAtom | MutatorError::GraphTooSmall,
         ));
+    }
+
+    #[test]
+    fn collision_filter_eventually_rejects_on_collision_prone_input() {
+        // BrOBr's structural symmetry (atoms 0 and 2 are equivalent Br
+        // terminals) makes the 65 536-bin folded ECFP coincidence
+        // probable: when HypervalentMutator picks atom 2 and the RNG
+        // happens to draw an OOD degree whose 32-bit invariant folds to
+        // atom 0's bin, the wrapper's ECFP equals the baseline's.
+        // Iterating seeds with a tiny mix forces the filter to trip
+        // within a small budget.
+        let parsed: smiles_parser::smiles::Smiles = "BrOBr".parse().expect("parse");
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&parsed);
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::new()
+            .add_mutator(alloc::boxed::Box::new(crate::HypervalentMutator), 1.0)
+            .add_predicate(alloc::boxed::Box::new(crate::HypervalentPredicate))
+            .with_k_max(1)
+            .with_collision_filter(2, 65_536);
+        let mut saw_collision = false;
+        for seed in 0..2048u64 {
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
+            if let Err(MutatorError::FingerprintCollision) = mix.sample(graph, &mut rng) {
+                saw_collision = true;
+                break;
+            }
+        }
+        assert!(
+            saw_collision,
+            "collision filter never triggered on BrOBr across 2048 seeds",
+        );
+    }
+
+    #[test]
+    fn collision_filter_passes_through_when_fingerprint_differs() {
+        // Sanity: the collision filter must not reject samples whose
+        // fingerprints actually differ. CCO with the same setup at a
+        // benign seed succeeds.
+        let parsed: smiles_parser::smiles::Smiles = "CCO".parse().expect("parse");
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&parsed);
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates()
+            .with_collision_filter(2, 65_536);
+        let mut rng = ChaCha8Rng::seed_from_u64(0xC0FFEE);
+        assert!(mix.sample(graph, &mut rng).is_ok());
+    }
+
+    #[test]
+    fn with_and_without_collision_filter_round_trip() {
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::new().with_collision_filter(2, 2048);
+        assert_eq!(mix.collision_filter(), Some((2, 2048)));
+        let mix = mix.without_collision_filter();
+        assert_eq!(mix.collision_filter(), None);
     }
 
     #[test]

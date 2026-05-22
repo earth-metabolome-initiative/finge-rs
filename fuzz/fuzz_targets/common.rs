@@ -397,7 +397,8 @@ pub fn assert_well_defined_error(err: MutatorError) {
         | MutatorError::NoEligibleAtom
         | MutatorError::NoEligibleBond
         | MutatorError::AlreadyViolated
-        | MutatorError::CompositionCancelled => {}
+        | MutatorError::CompositionCancelled
+        | MutatorError::FingerprintCollision => {}
     }
 }
 
@@ -873,7 +874,8 @@ pub fn fuzz_mutator_mix_invariants(smiles: Smiles, seed: u64) {
         return;
     };
 
-    let mix = MutatorMix::<finge_rs::smiles_support::SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();
+    let mix = MutatorMix::<finge_rs::smiles_support::SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates()
+        .with_collision_filter(MUTATOR_FP_RADIUS, MUTATOR_FP_SIZE);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     match mix.sample(graph, &mut rng) {
         Err(err) => assert_well_defined_error(err),

@@ -62,6 +62,15 @@ pub enum MutatorError {
     /// on the same atom-channel, leaving the wrapper pre-hash-identical to
     /// the inner graph. The caller should retry with a fresh seed or input.
     CompositionCancelled,
+    /// Returned by [`crate::MutatorMix::sample`] when the collision filter
+    /// (configured via
+    /// [`crate::MutatorMix::with_collision_filter`]) detected that the
+    /// wrapper's folded ECFP is byte-equal to the baseline's at the
+    /// configured `(radius, fp_size)`. The mutation changed pre-hash atom
+    /// invariants but the change collapsed back to identical bins under
+    /// folding — the sample carries no signal at the chosen `fp_size`.
+    /// The caller should retry with a fresh seed or input.
+    FingerprintCollision,
 }
 
 impl core::fmt::Display for MutatorError {
@@ -73,6 +82,9 @@ impl core::fmt::Display for MutatorError {
             Self::GraphTooSmall => f.write_str("graph too small for this mutator"),
             Self::CompositionCancelled => {
                 f.write_str("composed mutations cancelled out, no effective perturbation")
+            }
+            Self::FingerprintCollision => {
+                f.write_str("wrapper ECFP folded to the same bins as the baseline")
             }
         }
     }
@@ -107,6 +119,10 @@ mod tests {
         assert_eq!(
             MutatorError::CompositionCancelled.to_string(),
             "composed mutations cancelled out, no effective perturbation",
+        );
+        assert_eq!(
+            MutatorError::FingerprintCollision.to_string(),
+            "wrapper ECFP folded to the same bins as the baseline",
         );
     }
 }
