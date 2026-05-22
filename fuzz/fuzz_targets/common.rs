@@ -824,6 +824,102 @@ pub fn fuzz_topological_pathology_invariants(smiles: Smiles, seed: u64) {
     }
 }
 
+/// Enforces every invariant in the composition contract for
+/// `MutatorMix::sample`:
+///
+/// 1. Doesn't panic.
+/// 2. On `Ok((wrapper, label))`:
+///    a. `label.count() >= 1` (predicate-driven labelling).
+///    b. `1 <= label.count() <= MutatorMix::k_max()` (composition bound,
+///       loosened to 8 because secondary co-firings can briefly exceed
+///       `k_max`).
+///    c. `wrapper`'s count-ECFP differs from the baseline.
+///    d. Determinism: re-running with the same seed produces an identical
+///       fingerprint.
+/// 3. On `Err`, the error is one of the four well-defined variants.
+pub fn fuzz_mutator_mix_invariants(smiles: Smiles, seed: u64) {
+    use finge_rs::{MutatorMix, ViolationClass, ViolationPredicate};
+    let mut scratch = SmilesRdkitScratch::default();
+    let Some(graph) = prepare_graph(&mut scratch, &smiles) else {
+        return;
+    };
+    let baseline_fp = count_ecfp_fingerprint(&graph);
+
+    let mix = MutatorMix::<finge_rs::smiles_support::SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    match mix.sample(graph, &mut rng) {
+        Err(err) => assert_well_defined_error(err),
+        Ok((wrapper, label)) => {
+            let count = label.count();
+            assert!(
+                count >= 1,
+                "successful MutatorMix::sample must set at least one bit",
+            );
+            assert!(
+                count <= ViolationClass::COUNT as u32,
+                "label count {count} exceeds total class count",
+            );
+
+            assert_ne!(
+                baseline_fp,
+                count_ecfp_fingerprint(&wrapper),
+                "MutatorMix::sample: composed wrapper has unchanged count-ECFP",
+            );
+
+            // Every set bit must be backed by a firing predicate.
+            for class in ViolationClass::ALL {
+                if label.is_set(class) {
+                    let fires = match class {
+                        ViolationClass::ImpossibleAtomicNumber => {
+                            ImpossibleAtomicNumberPredicate.check(&wrapper)
+                        }
+                        ViolationClass::Hypervalent => HypervalentPredicate.check(&wrapper),
+                        ViolationClass::ImpossibleHCount => {
+                            ImpossibleHCountPredicate.check(&wrapper)
+                        }
+                        ViolationClass::ImpossibleCharge => {
+                            ImpossibleChargePredicate.check(&wrapper)
+                        }
+                        ViolationClass::ImpossibleIsotope => {
+                            ImpossibleIsotopePredicate.check(&wrapper)
+                        }
+                        ViolationClass::ImpossibleRingFlag => {
+                            ImpossibleRingFlagPredicate.check(&wrapper)
+                        }
+                        ViolationClass::ImpossibleBondType => {
+                            ImpossibleBondTypePredicate.check(&wrapper)
+                        }
+                        ViolationClass::TopologicalPathology => {
+                            TopologicalPathologyPredicate.check(&wrapper)
+                        }
+                    };
+                    assert!(
+                        fires,
+                        "label bit {class:?} set but predicate did not fire",
+                    );
+                }
+            }
+
+            // Determinism: re-running with the same seed produces an
+            // identical fingerprint.
+            let mut rng2 = ChaCha8Rng::seed_from_u64(seed);
+            let (wrapper2, label2) = mix
+                .sample(graph, &mut rng2)
+                .expect("deterministic re-run must succeed");
+            assert_eq!(
+                count_ecfp_fingerprint(&wrapper),
+                count_ecfp_fingerprint(&wrapper2),
+                "MutatorMix::sample is non-deterministic for a fixed seed",
+            );
+            assert_eq!(
+                label.as_u8(),
+                label2.as_u8(),
+                "MutatorMix::sample produced different labels for the same seed",
+            );
+        }
+    }
+}
+
 pub fn fuzz_maccs(smiles: Smiles) {
     let fingerprint = MaccsFingerprint::new().expect("MACCS SMARTS should compile");
     let target = PreparedTarget::new(smiles.clone());

@@ -105,5 +105,12 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "mutator_mix"
+path = "fuzz_targets/mutator_mix.rs"
+test = false
+doc = false
+bench = false
+
 [profile.release]
 debug = 1

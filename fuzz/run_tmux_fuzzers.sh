@@ -64,12 +64,14 @@ tmux split-window -t "${SESSION_NAME}:0.1" -v -c "${REPO_ROOT}" \
 
 tmux select-layout -t "${SESSION_NAME}:0" tiled
 
-# Window 1: the eight per-mutator invariance fuzzers (one tile per mutator).
+# Window 1: the eight per-mutator invariance fuzzers plus the
+# MutatorMix composition fuzzer (one tile per target).
 tmux new-window -t "${SESSION_NAME}" -n "mutators" -c "${REPO_ROOT}" \
   "bash -lc 'cargo fuzz run mutator_atomic_number ${COMMON_ARGS}'"
 
 for target in mutator_hypervalent mutator_h_count mutator_formal_charge \
-              mutator_isotope mutator_ring_flag mutator_bond_type mutator_topology; do
+              mutator_isotope mutator_ring_flag mutator_bond_type \
+              mutator_topology mutator_mix; do
   tmux split-window -t "${SESSION_NAME}:1" -c "${REPO_ROOT}" \
     "bash -lc 'cargo fuzz run ${target} ${COMMON_ARGS}'"
   tmux select-layout -t "${SESSION_NAME}:1" tiled
@@ -85,7 +87,7 @@ Started tmux session '${SESSION_NAME}' with two windows:
     - atom_pair
     - topological_torsion
     - maccs
-  window 1 'mutators' (8 panes):
+  window 1 'mutators' (9 panes):
     - mutator_atomic_number
     - mutator_hypervalent
     - mutator_h_count
@@ -94,6 +96,7 @@ Started tmux session '${SESSION_NAME}' with two windows:
     - mutator_ring_flag
     - mutator_bond_type
     - mutator_topology
+    - mutator_mix
 
 Re-attach later with:
   tmux attach -t ${SESSION_NAME}
