@@ -284,6 +284,26 @@ where
     bonds
 }
 
+/// Sums the radius-0 ECFP atom invariants of every *non-ignored* atom,
+/// wrapping on overflow. Used by the per-mutator harnesses as a
+/// collision-proof stand-in for the previous "count-ECFP unchanged" check:
+/// folded ECFP at 65 536 bins false-positives on ~1.5e-5 of mutations due
+/// to low-bit hash collisions (see `BrOBr` / `[84Ga][61Cu]` / `B[ClH]` /
+/// `C` regressions); the per-atom 32-bit invariant sum is essentially
+/// collision-free (rate ≈ 1/2³²) and still catches the real bug class
+/// "mutator wrote to an atom that ECFP doesn't see" — a write to an
+/// ignored atom leaves the visible-invariant sum unchanged.
+pub fn visible_invariant_sum<G>(graph: &G) -> u32
+where
+    G: EcfpGraph<NodeId = usize>,
+    G::NodeSymbol: MolecularAtom,
+{
+    (0..graph.atom_count())
+        .filter(|&id| !graph.ecfp_atom_is_ignored(id))
+        .map(|id| graph.ecfp_atom_invariant(id, true))
+        .fold(0_u32, |acc, v| acc.wrapping_add(v))
+}
+
 /// Counts atom indices whose field tuples differ between two graphs of equal
 /// atom count.
 fn count_atom_field_diffs<G1, G2>(before: &G1, after: &G2) -> usize
@@ -396,14 +416,22 @@ pub fn fuzz_impossible_atomic_number_invariants(smiles: Smiles, seed: u64) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
             // (3) hash-level visibility
-            // NOTE: a former "count-ECFP unchanged" assertion was removed —
-            // 65 536-bin folded ECFP has a non-negligible probability of
-            // collapsing two distinct 32-bit invariants into the same bin
-            // (see `[84Ga][61Cu]` / `BrOBr` / `B[ClH]` fuzz crashes). The
-            // collision-proof pre-hash tuple check below (step 7) catches
-            // the real bug class: a mutator that writes an override which
-            // doesn't change the atom invariant. Folded-ECFP visibility is
-            // a separate concern that depends on the user's fp_size.
+            // (3') collision-proof ECFP visibility: the sum of R0
+            // invariants over non-ignored atoms must change. Replaces the
+            // previous "count-ECFP unchanged" check, which folded to
+            // 65 536 bins and produced false positives on low-bit hash
+            // collisions (see `B[ClH]` / `[84Ga][61Cu]` / `BrOBr` / `C`
+            // fuzz crashes — atom 2's R0 in BrOBr coincidentally folded to
+            // the same bin as atom 0's). This unfolded 32-bit sum still
+            // catches the real bug class: a mutator that writes to an
+            // atom ECFP cannot see (e.g. one skipped by
+            // `pick_unignored_atom`).
+            assert_ne!(
+                visible_invariant_sum(&graph),
+                visible_invariant_sum(&wrapper),
+                "ImpossibleAtomicNumberMutator: visible R0 invariant sum unchanged \
+                 — likely wrote to an ECFP-ignored atom",
+            );
 
             // (4) primary predicate fires
             assert!(
@@ -461,9 +489,12 @@ pub fn fuzz_hypervalent_invariants(smiles: Smiles, seed: u64) {
     match HypervalentMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            // Folded-ECFP-unchanged assertion removed — see the longer
-            // explanation in `fuzz_impossible_atomic_number_invariants`.
-            // The collision-proof tuple-level check below is sufficient.
+            assert_ne!(
+                visible_invariant_sum(&graph),
+                visible_invariant_sum(&wrapper),
+                "HypervalentMutator: visible R0 invariant sum unchanged — see \
+                 `fuzz_impossible_atomic_number_invariants` for the rationale",
+            );
             assert!(
                 HypervalentPredicate.check(&wrapper),
                 "HypervalentPredicate did not fire",
@@ -513,8 +544,11 @@ pub fn fuzz_impossible_h_count_invariants(smiles: Smiles, seed: u64) {
     match ImpossibleHCountMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            // Folded-ECFP-unchanged assertion removed — see the longer
-            // explanation in `fuzz_impossible_atomic_number_invariants`.
+            assert_ne!(
+                visible_invariant_sum(&graph),
+                visible_invariant_sum(&wrapper),
+                "ImpossibleHCountMutator: visible R0 invariant sum unchanged",
+            );
             assert!(
                 ImpossibleHCountPredicate.check(&wrapper),
                 "ImpossibleHCountPredicate did not fire",
@@ -564,8 +598,11 @@ pub fn fuzz_impossible_charge_invariants(smiles: Smiles, seed: u64) {
     match ImpossibleChargeMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            // Folded-ECFP-unchanged assertion removed — see the longer
-            // explanation in `fuzz_impossible_atomic_number_invariants`.
+            assert_ne!(
+                visible_invariant_sum(&graph),
+                visible_invariant_sum(&wrapper),
+                "ImpossibleChargeMutator: visible R0 invariant sum unchanged",
+            );
             assert!(
                 ImpossibleChargePredicate.check(&wrapper),
                 "ImpossibleChargePredicate did not fire",
@@ -618,8 +655,11 @@ pub fn fuzz_impossible_isotope_invariants(smiles: Smiles, seed: u64) {
     match ImpossibleIsotopeMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            // Folded-ECFP-unchanged assertion removed — see the longer
-            // explanation in `fuzz_impossible_atomic_number_invariants`.
+            assert_ne!(
+                visible_invariant_sum(&graph),
+                visible_invariant_sum(&wrapper),
+                "ImpossibleIsotopeMutator: visible R0 invariant sum unchanged",
+            );
             assert!(
                 ImpossibleIsotopePredicate.check(&wrapper),
                 "ImpossibleIsotopePredicate did not fire",
@@ -672,8 +712,11 @@ pub fn fuzz_impossible_ring_flag_invariants(smiles: Smiles, seed: u64) {
     match ImpossibleRingFlagMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            // Folded-ECFP-unchanged assertion removed — see the longer
-            // explanation in `fuzz_impossible_atomic_number_invariants`.
+            assert_ne!(
+                visible_invariant_sum(&graph),
+                visible_invariant_sum(&wrapper),
+                "ImpossibleRingFlagMutator: visible R0 invariant sum unchanged",
+            );
             assert!(
                 ImpossibleRingFlagPredicate.check(&wrapper),
                 "ImpossibleRingFlagPredicate did not fire",
@@ -719,8 +762,12 @@ pub fn fuzz_impossible_bond_type_invariants(smiles: Smiles, seed: u64) {
     match ImpossibleBondTypeMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            // Folded-ECFP-unchanged assertion removed — see the longer
-            // explanation in `fuzz_impossible_atomic_number_invariants`.
+            // No `visible_invariant_sum` check here — the bond-channel
+            // mutator must NOT change any atom's R0 invariant (asserted
+            // separately below via `assert_mutator_no_atom_diff`). The
+            // bond-side coverage comes from `assert_mutator_minimal_diff_bonds`
+            // and the bond_invariant_signature comparison, which are both
+            // unfolded and therefore collision-proof.
             assert!(
                 ImpossibleBondTypePredicate.check(&wrapper),
                 "ImpossibleBondTypePredicate did not fire",
@@ -771,8 +818,11 @@ pub fn fuzz_topological_pathology_invariants(smiles: Smiles, seed: u64) {
     match TopologicalPathologyMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            // Folded-ECFP-unchanged assertion removed — see the longer
-            // explanation in `fuzz_impossible_atomic_number_invariants`.
+            assert_ne!(
+                visible_invariant_sum(&graph),
+                visible_invariant_sum(&wrapper),
+                "TopologicalPathologyMutator: visible R0 invariant sum unchanged",
+            );
             assert!(
                 TopologicalPathologyPredicate.check(&wrapper),
                 "TopologicalPathologyPredicate did not fire",
@@ -849,6 +899,18 @@ pub fn fuzz_mutator_mix_invariants(smiles: Smiles, seed: u64) {
             assert!(
                 wrapper.has_effective_perturbation(),
                 "MutatorMix::sample returned Ok with no effective perturbation",
+            );
+            // And: at least one change must actually reach the ECFP
+            // emission path — either an R0 invariant on a non-ignored atom
+            // or a bond invariant. `has_effective_perturbation` alone
+            // would silently accept a hypothetical composition whose every
+            // override landed on ECFP-ignored atoms.
+            let invariant_changed =
+                visible_invariant_sum(&graph) != visible_invariant_sum(&wrapper);
+            let bonds_changed = bond_invariant_signature(&graph) != bond_invariant_signature(&wrapper);
+            assert!(
+                invariant_changed || bonds_changed,
+                "MutatorMix::sample produced a wrapper whose perturbation is invisible to ECFP",
             );
 
             // Every set bit must be backed by a firing predicate.
