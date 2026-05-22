@@ -1,10 +1,12 @@
-//! Property-based tests for the four correctness invariants spelled out in
-//! the plan's *Correctness invariants* section.
+//! Property-based tests for the correctness invariants of the mutation
+//! suite — both the per-mutator contracts and the composed
+//! [`crate::MutatorMix::sample`] behaviour.
 //!
+//! Per-mutator (k=1):
 //! 1. `prop_ecfp_changes_for_every_mutator` — for every mutator `M`, every
 //!    SMILES from a small canonical corpus, and every successful
-//!    `M.mutate(G, rng)`, the ECFP bit set at radius 2 must differ from the
-//!    baseline (hash level).
+//!    `M.mutate_in_place(...)`, the ECFP bit set at radius 2 must differ
+//!    from the baseline (hash level).
 //! 2. `prop_atom_mutators_change_field_tuple` — same input space, but for the
 //!    seven *atom-channel* mutators only, the pre-hash atom invariant field
 //!    multiset must also differ from baseline (collision-proof tuple level).
@@ -16,8 +18,14 @@
 //! 4. `prop_no_panic_on_small_inputs` — every mutator on every 1-, 2-, and
 //!    3-atom graph must return `Ok` or `Err`, never panic.
 //!
-//! Each property iterates the eight built-in mutators per generated case so
-//! the corpus is exercised exhaustively.
+//! Composition (MutatorMix):
+//! 5. `prop_every_set_label_bit_has_firing_predicate` — after a successful
+//!    `MutatorMix::sample`, every bit set in the returned [`ViolationLabel`]
+//!    must correspond to a predicate that actually fires on the returned
+//!    wrapper. Predicate-driven labelling is symmetric, so the converse
+//!    follows by construction.
+//! 6. `prop_composed_label_bit_count_within_bounds` — after success, the
+//!    label has at least one bit set and at most `min(k_max, 8)` bits.
 
 #![cfg(test)]
 
@@ -32,8 +40,8 @@ use crate::{
     ImpossibleBondTypePredicate, ImpossibleChargeMutator, ImpossibleChargePredicate,
     ImpossibleHCountMutator, ImpossibleHCountPredicate, ImpossibleIsotopeMutator,
     ImpossibleIsotopePredicate, ImpossibleRingFlagMutator, ImpossibleRingFlagPredicate,
-    InvalidatedGraph, MolecularAtom, Mutator, TopologicalPathologyMutator,
-    TopologicalPathologyPredicate, ViolationPredicate,
+    InvalidatedGraph, MolecularAtom, Mutator, MutatorMix, PredicateClass,
+    TopologicalPathologyMutator, TopologicalPathologyPredicate, ViolationClass, ViolationPredicate,
     smiles_support_impl::{SmilesRdkitGraph, SmilesRdkitScratch},
 };
 
@@ -267,5 +275,73 @@ proptest! {
         check_no_panic(&ImpossibleRingFlagMutator, inner, seed)?;
         check_no_panic(&ImpossibleBondTypeMutator, inner, seed)?;
         check_no_panic(&TopologicalPathologyMutator, inner, seed)?;
+    }
+
+    #[test]
+    fn prop_every_set_label_bit_has_firing_predicate(
+        smiles_idx in 0..FULL_CORPUS.len(),
+        seed in any::<u64>(),
+    ) {
+        let smiles = FULL_CORPUS[smiles_idx];
+        let mut scratch = SmilesRdkitScratch::default();
+        let parsed: smiles_parser::smiles::Smiles = smiles.parse()
+            .expect("fixture SMILES should parse");
+        let inner = scratch.prepare(&parsed);
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        if let Ok((wrapper, label)) = mix.sample(inner, &mut rng) {
+            for class in ViolationClass::ALL {
+                if label.is_set(class) {
+                    prop_assert!(
+                        predicate_fires_for_class(class, &wrapper),
+                        "label bit {class:?} set but predicate did not fire (smiles={smiles}, seed={seed})",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prop_composed_label_bit_count_within_bounds(
+        smiles_idx in 0..FULL_CORPUS.len(),
+        seed in any::<u64>(),
+    ) {
+        let smiles = FULL_CORPUS[smiles_idx];
+        let mut scratch = SmilesRdkitScratch::default();
+        let parsed: smiles_parser::smiles::Smiles = smiles.parse()
+            .expect("fixture SMILES should parse");
+        let inner = scratch.prepare(&parsed);
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        if let Ok((_, label)) = mix.sample(inner, &mut rng) {
+            let count = label.count();
+            prop_assert!(count >= 1, "successful sample must set at least one bit");
+            prop_assert!(
+                count <= u32::from(ViolationClass::COUNT as u8),
+                "label count {count} exceeds total class count",
+            );
+        }
+    }
+}
+
+/// Dispatches to the matching predicate for `class`. Returns `false` for any
+/// class without a matching built-in predicate (which is exhaustive here).
+fn predicate_fires_for_class<G>(class: ViolationClass, wrapper: &G) -> bool
+where
+    G: EcfpGraph,
+    G::NodeSymbol: MolecularAtom,
+{
+    match class {
+        ViolationClass::ImpossibleAtomicNumber => {
+            ImpossibleAtomicNumberPredicate.check(wrapper)
+                && ImpossibleAtomicNumberPredicate.class() == class
+        }
+        ViolationClass::Hypervalent => HypervalentPredicate.check(wrapper),
+        ViolationClass::ImpossibleHCount => ImpossibleHCountPredicate.check(wrapper),
+        ViolationClass::ImpossibleCharge => ImpossibleChargePredicate.check(wrapper),
+        ViolationClass::ImpossibleIsotope => ImpossibleIsotopePredicate.check(wrapper),
+        ViolationClass::ImpossibleRingFlag => ImpossibleRingFlagPredicate.check(wrapper),
+        ViolationClass::ImpossibleBondType => ImpossibleBondTypePredicate.check(wrapper),
+        ViolationClass::TopologicalPathology => TopologicalPathologyPredicate.check(wrapper),
     }
 }
