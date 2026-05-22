@@ -13,13 +13,18 @@ use crate::{
     traits::{EcfpGraph, MolecularAtom},
 };
 
-const CHARGE_CHOICES: [i32; 6] = [-9, -8, -7, 7, 8, 9];
+/// Inclusive bounds of the OOD charge-magnitude range. Predicate fires for
+/// any `|q| > 6`; the lower bound of `7` preserves a one-step gap past that
+/// threshold, and the upper bound is wide enough that the model can't
+/// memorise a small set of magic values.
+const CHARGE_MAGNITUDE_LOW: u32 = 7;
+const CHARGE_MAGNITUDE_HIGH: u32 = 32_767;
 
 /// Mutator targeting [`ViolationClass::ImpossibleCharge`].
 ///
-/// Picks one random atom and writes a `formal_charge` chosen uniformly from
-/// `{-9, -8, -7, +7, +8, +9}`. All values have `|q| > 6` and so always trip
-/// the matching predicate.
+/// Picks one random atom and writes a `formal_charge` of `sign × |q|` where
+/// `|q| ~ Uniform[7, 32_767]` and `sign ∈ {-1, +1}` are drawn from `rng`.
+/// All values have `|q| > 6` so the matching predicate always fires.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ImpossibleChargeMutator;
 
@@ -35,14 +40,20 @@ where
     ) -> Result<(), MutatorError> {
         let target = pick_unignored_atom(rng, wrapper).ok_or(MutatorError::NoEligibleAtom)?;
         let current = wrapper.ecfp_atom_invariant_fields(target).formal_charge;
-        let mut pick = (rng.next_u32() as usize) % CHARGE_CHOICES.len();
-        // Guarantee `override != current`. The choice set is small enough
-        // that incrementing `pick` mod len trivially finds a different
-        // value (every other entry in the set has a distinct magnitude).
-        if CHARGE_CHOICES[pick] == current {
-            pick = (pick + 1) % CHARGE_CHOICES.len();
+
+        let r = rng.next_u32();
+        let span = CHARGE_MAGNITUDE_HIGH - CHARGE_MAGNITUDE_LOW + 1;
+        let magnitude = (CHARGE_MAGNITUDE_LOW + (r >> 1) % span) as i32;
+        let sign = if r & 1 == 0 { 1 } else { -1 };
+        let mut override_q = sign * magnitude;
+        // Guarantee `override != current`. With magnitudes in `[7, 32767]`
+        // the only collision happens when the inner already carries the
+        // exact same charge — extremely unlikely for real molecules but
+        // possible when composing several charge mutators on the same atom.
+        // Negating preserves the OOD magnitude.
+        if override_q == current {
+            override_q = -override_q;
         }
-        let override_q = CHARGE_CHOICES[pick];
 
         wrapper.set_formal_charge_override(target, override_q);
         Ok(())

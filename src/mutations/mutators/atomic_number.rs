@@ -20,14 +20,20 @@ use crate::{
 };
 
 /// Range of "super-heavy" atomic numbers the mutator picks from (inclusive).
+///
+/// The upper bound is widened well past any plausible periodic-table extension
+/// so the per-class hash-image region is broad enough that the model can't
+/// memorise a handful of magic numbers. `119..=65_535` still satisfies the
+/// `is_impossible_atomic_number` predicate (`z == 0 || z > 118`) for every
+/// value in the range.
 const SUPER_HEAVY_Z_LOW: u32 = 119;
-const SUPER_HEAVY_Z_HIGH: u32 = 200;
+const SUPER_HEAVY_Z_HIGH: u32 = 65_535;
 
 /// Mutator targeting [`ViolationClass::ImpossibleAtomicNumber`].
 ///
 /// Picks one random atom and overrides its `atomic_number` to either `0`
-/// (wildcard / no element) or a random `Z` in `119..=200` (super-heavy /
-/// undiscovered).
+/// (wildcard / no element) or a random `Z` in `119..=65_535` (super-heavy /
+/// undiscovered). Both branches always trip the matching predicate.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ImpossibleAtomicNumberMutator;
 
@@ -195,7 +201,7 @@ mod tests {
 
     #[test]
     fn override_z_is_either_zero_or_super_heavy() {
-        // With many seeds the override should be either 0 or in 119..=200.
+        // With many seeds the override should be either 0 or in 119..=65_535.
         // This guards against off-by-one errors in the bit-twiddling above.
         for seed in 0..32u64 {
             let (mut scratch, parsed) = prepared("CCO");
@@ -205,16 +211,43 @@ mod tests {
             let mut found_violation = false;
             for atom_id in 0..mutated.atom_count() {
                 let z = mutated.ecfp_atom_invariant_fields(atom_id).atomic_number;
-                if z == 0 || (119..=200).contains(&z) {
+                if z == 0 || (119..=65_535).contains(&z) {
                     found_violation = true;
                     break;
                 }
             }
             assert!(
                 found_violation,
-                "seed {seed} did not produce a Z=0 or Z in 119..=200"
+                "seed {seed} did not produce a Z=0 or Z in 119..=65_535"
             );
         }
+    }
+
+    #[test]
+    fn override_z_distribution_spans_at_least_eight_distinct_values() {
+        // Diversity check: across 256 seeds the mutator should pick many
+        // distinct super-heavy Z values, not just one or two magic numbers.
+        // A single-magic-value mutator (the pre-Step-2 behaviour with
+        // SUPER_HEAVY_Z_HIGH = 200 had at most 82 distinct values; the
+        // widened range pushes the cardinality far higher).
+        use alloc::collections::BTreeSet;
+        let (mut scratch, parsed) = prepared("CCO");
+        let inner = scratch.prepare(&parsed);
+        let mut distinct: BTreeSet<u32> = BTreeSet::new();
+        for seed in 0..256u64 {
+            let mutated = mutate(inner, seed);
+            for atom_id in 0..mutated.atom_count() {
+                let z = mutated.ecfp_atom_invariant_fields(atom_id).atomic_number;
+                if z == 0 || z > 118 {
+                    distinct.insert(z);
+                }
+            }
+        }
+        assert!(
+            distinct.len() >= 8,
+            "expected >= 8 distinct override Z values across 256 seeds, got {}",
+            distinct.len()
+        );
     }
 
     // -----------------------------------------------------------------

@@ -14,10 +14,18 @@ use crate::{
     traits::{EcfpGraph, MolecularAtom},
 };
 
+/// Ceiling of the OOD degree range. Values up to this bound still satisfy
+/// `total_degree > max_natural_valence(Z)` for every element in
+/// `max_natural_valence`'s table (max returned value is `8`).
+const DEGREE_CEILING: u32 = 200;
+
 /// Mutator targeting [`ViolationClass::Hypervalent`].
 ///
-/// Overrides the chosen atom's `total_degree` to
-/// `max_natural_valence(Z) + Δ` where `Δ ∈ {2, 3, 4, 5}` is drawn from `rng`.
+/// Overrides the chosen atom's `total_degree` to a uniform random integer in
+/// `[max_natural_valence(Z) + 2, DEGREE_CEILING]`. The lower bound preserves
+/// a one-step gap past the predicate threshold (`> max`) so the model has to
+/// learn the rule rather than the boundary; the wider upper bound spreads
+/// the OOD hash region so the model can't memorise a single magic value.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct HypervalentMutator;
 
@@ -33,15 +41,21 @@ where
     ) -> Result<(), MutatorError> {
         let target = pick_unignored_atom(rng, wrapper).ok_or(MutatorError::NoEligibleAtom)?;
         let fields = wrapper.ecfp_atom_invariant_fields(target);
-        let bump = 2 + (rng.next_u32() % 4);
-        let mut override_degree = max_natural_valence(fields.atomic_number).saturating_add(bump);
+        let lower = max_natural_valence(fields.atomic_number).saturating_add(2);
+        let upper = DEGREE_CEILING.max(lower);
+        let span = upper - lower + 1;
+        let mut override_degree = lower + rng.next_u32() % span;
         // Guarantee `override != current`. For weird inputs (e.g. argon with
         // `max_natural_valence(18) == 0` and a natural degree of 2) the
-        // `max + bump` formula can coincide with the atom's existing degree,
-        // turning the mutation into a silent no-op
+        // uniform draw can land on the atom's existing degree, turning the
+        // mutation into a silent no-op
         // (fuzz/artifacts/mutator_hypervalent/crash-0794abb9…, …/crash-6358b428…).
         if override_degree == fields.total_degree {
-            override_degree = override_degree.saturating_add(1);
+            override_degree = if override_degree < upper {
+                override_degree + 1
+            } else {
+                lower
+            };
         }
 
         wrapper.set_total_degree_override(target, override_degree);

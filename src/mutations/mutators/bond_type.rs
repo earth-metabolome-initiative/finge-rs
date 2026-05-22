@@ -50,11 +50,18 @@ where
     bonds
 }
 
+/// Inclusive bounds of the OOD bond-invariant range. Predicate fires for any
+/// invariant outside `{1, 2, 3, 12}`; values in `[13, 1_000_000]` are
+/// trivially disjoint from that set and broad enough to keep the OOD hash
+/// region from collapsing to a small set of memorisable codes.
+const BOND_INVARIANT_LOW: u32 = 13;
+const BOND_INVARIANT_HIGH: u32 = 1_000_000;
+
 /// Mutator targeting [`ViolationClass::ImpossibleBondType`].
 ///
-/// Picks one random bond and writes a `u32` invariant in `13..=112`. Every
-/// value in that range is outside the RDKit-recognised set `{1, 2, 3, 12}`,
-/// so the matching predicate always fires.
+/// Picks one random bond and writes a `u32` invariant uniformly drawn from
+/// `[13, 1_000_000]`. Every value is outside the RDKit-recognised set
+/// `{1, 2, 3, 12}` so the matching predicate always fires.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ImpossibleBondTypeMutator;
 
@@ -70,7 +77,8 @@ where
     ) -> Result<(), MutatorError> {
         let bonds = collect_unique_bonds(wrapper);
         let &(source, target) = pick_from_slice(rng, &bonds).ok_or(MutatorError::NoEligibleBond)?;
-        let override_inv = 13 + (rng.next_u32() % 100);
+        let span = BOND_INVARIANT_HIGH - BOND_INVARIANT_LOW + 1;
+        let override_inv = BOND_INVARIANT_LOW + rng.next_u32() % span;
 
         wrapper.set_bond_invariant_override(source, target, override_inv);
         Ok(())

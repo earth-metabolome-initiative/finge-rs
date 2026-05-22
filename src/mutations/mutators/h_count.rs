@@ -14,11 +14,17 @@ use crate::{
     traits::{EcfpGraph, MolecularAtom},
 };
 
+/// Ceiling of the OOD hydrogen-count range. Predicate fires for any value
+/// `> max_natural_valence(Z) + 1`; the lower bound `max + 2` preserves a
+/// one-step gap past that threshold.
+const HYDROGENS_CEILING: u32 = 200;
+
 /// Mutator targeting [`ViolationClass::ImpossibleHCount`].
 ///
-/// Overrides the chosen atom's `total_hydrogens` to
-/// `max_natural_valence(Z) + Δ` with `Δ ∈ {2, 3, 4, 5}` so the predicate
-/// (`total_hydrogens > max + 1`) reliably fires.
+/// Overrides the chosen atom's `total_hydrogens` to a uniform random integer
+/// in `[max_natural_valence(Z) + 2, HYDROGENS_CEILING]`. The wide upper
+/// bound spreads the OOD hash region so the model can't memorise a small
+/// set of magic counts.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ImpossibleHCountMutator;
 
@@ -34,13 +40,19 @@ where
     ) -> Result<(), MutatorError> {
         let target = pick_unignored_atom(rng, wrapper).ok_or(MutatorError::NoEligibleAtom)?;
         let fields = wrapper.ecfp_atom_invariant_fields(target);
-        let bump = 2 + (rng.next_u32() % 4);
-        let mut override_h = max_natural_valence(fields.atomic_number).saturating_add(bump);
+        let lower = max_natural_valence(fields.atomic_number).saturating_add(2);
+        let upper = HYDROGENS_CEILING.max(lower);
+        let span = upper - lower + 1;
+        let mut override_h = lower + rng.next_u32() % span;
         // Guarantee `override != current` — same defensive measure as in
         // `HypervalentMutator` for pathological inputs where the natural
-        // value coincides with `max + bump`.
+        // value coincides with the uniform draw.
         if override_h == fields.total_hydrogens {
-            override_h = override_h.saturating_add(1);
+            override_h = if override_h < upper {
+                override_h + 1
+            } else {
+                lower
+            };
         }
 
         wrapper.set_total_hydrogens_override(target, override_h);

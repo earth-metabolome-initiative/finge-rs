@@ -13,13 +13,18 @@ use crate::{
     traits::{EcfpGraph, MolecularAtom},
 };
 
-const DELTA_MASS_CHOICES: [i32; 6] = [-127, -120, -100, 100, 120, 127];
+/// Inclusive bounds of the OOD `delta_mass` magnitude range. Predicate fires
+/// for any `|Δmass| > 80`; the lower bound of `81` preserves a one-step gap
+/// past that threshold, and the upper bound is wide enough that the model
+/// can't memorise a small set of magic isotopes.
+const DELTA_MASS_MAGNITUDE_LOW: u32 = 81;
+const DELTA_MASS_MAGNITUDE_HIGH: u32 = 32_767;
 
 /// Mutator targeting [`ViolationClass::ImpossibleIsotope`].
 ///
-/// Picks one random atom and writes a `delta_mass` chosen uniformly from
-/// `{±127, ±120, ±100}`. All values have `|Δmass| > 80` and so always trip
-/// the matching predicate.
+/// Picks one random atom and writes `delta_mass = sign × |Δm|` where
+/// `|Δm| ~ Uniform[81, 32_767]` and `sign ∈ {-1, +1}` are drawn from `rng`.
+/// All values have `|Δmass| > 80` so the matching predicate always fires.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ImpossibleIsotopeMutator;
 
@@ -35,13 +40,17 @@ where
     ) -> Result<(), MutatorError> {
         let target = pick_unignored_atom(rng, wrapper).ok_or(MutatorError::NoEligibleAtom)?;
         let current = wrapper.ecfp_atom_invariant_fields(target).delta_mass;
-        let mut pick = (rng.next_u32() as usize) % DELTA_MASS_CHOICES.len();
+
+        let r = rng.next_u32();
+        let span = DELTA_MASS_MAGNITUDE_HIGH - DELTA_MASS_MAGNITUDE_LOW + 1;
+        let magnitude = (DELTA_MASS_MAGNITUDE_LOW + (r >> 1) % span) as i32;
+        let sign = if r & 1 == 0 { 1 } else { -1 };
+        let mut override_dm = sign * magnitude;
         // Guarantee `override != current` — same defensive scheme as
         // `ImpossibleChargeMutator`.
-        if DELTA_MASS_CHOICES[pick] == current {
-            pick = (pick + 1) % DELTA_MASS_CHOICES.len();
+        if override_dm == current {
+            override_dm = -override_dm;
         }
-        let override_dm = DELTA_MASS_CHOICES[pick];
 
         wrapper.set_delta_mass_override(target, override_dm);
         Ok(())
