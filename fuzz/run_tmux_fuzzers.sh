@@ -45,23 +45,24 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # libFuzzer runtime knobs (passed after `--` to cargo-fuzz). Mirror the
 # subql `fuzz.sh` defaults; finge-rs-specific rationale:
-#   -timeout=15        abort a single input after 15s. The smiles-parser
-#                      `perceive_aromaticity_for(RdkitDefault)` path is
-#                      pathologically slow (~16s) on certain adversarial
-#                      69-atom SMILES with reused small-digit ring closures
-#                      across many disconnected fragments. Without this,
-#                      a single slow input lets libFuzzer's RSS drift past
-#                      the default 2 GiB rss_limit and trip code 71.
-#                      (Tracked upstream in smiles-parser; until fixed,
-#                      the timeout converts these from OOMs into clean
-#                      timeout artifacts that the fuzzer can skip past.)
+#   -timeout=15        abort a single input after 15s. The original
+#                      motivation was a smiles-parser
+#                      `perceive_aromaticity_for(RdkitDefault)` slowdown
+#                      (~16s on certain adversarial 69-atom SMILES),
+#                      since fixed upstream on 2026-05-24 (smiles-parser
+#                      revision `ba32bd63`). The knob stays as
+#                      defense-in-depth against future pathological
+#                      inputs, mirroring subql's fuzz.sh.
+#                      See docs/upstream-issues/smiles-parser-aromaticity-perf.md
+#                      for the full history.
 #   -timeout_exitcode=0 make timeouts non-fatal: libFuzzer files the
 #                      `timeout-<hash>` artifact and KEEPS GOING instead
-#                      of exiting with code 70. We already know the
-#                      timeouts are upstream and not actionable in
-#                      finge-rs; without this knob, a single slow input
-#                      kills the entire fuzz session. Real panics still
-#                      stop the run via the default error_exitcode=77.
+#                      of exiting with code 70. Useful insurance: even
+#                      with the upstream fix in place, any future slow
+#                      input (in finge-rs, smarts-rs, or the smiles-parser
+#                      again) will be skipped rather than killing the
+#                      fuzz session. Real panics still stop the run via
+#                      the default error_exitcode=77.
 #   -max_len=512       cap generated input size. `parse_smiles` already
 #                      rejects strings longer than 128 bytes, so a 512-byte
 #                      libfuzzer cap leaves ample room for the `arbitrary`

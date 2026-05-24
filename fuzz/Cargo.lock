@@ -393,7 +393,7 @@ dependencies = [
 [[package]]
 name = "smiles-parser"
 version = "0.1.0"
-source = "git+https://github.com/earth-metabolome-initiative/smiles-parser?branch=main#0dbb557eec04644171f3a3df0b0906a54cf66668"
+source = "git+https://github.com/earth-metabolome-initiative/smiles-parser?branch=main#ba32bd63b93083952eac98b60409c67d70b18cd7"
 dependencies = [
  "elements_rs",
  "geometric-traits",

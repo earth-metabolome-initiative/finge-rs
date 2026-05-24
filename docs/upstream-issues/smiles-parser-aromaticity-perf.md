@@ -1,9 +1,12 @@
 # smiles-parser: `perceive_aromaticity_for(RdkitDefault)` pathological slowdown
 
+**Status: FIXED upstream on 2026-05-24 at revision `ba32bd63`.** The original
+report and post-fix timings are kept below for reference.
+
 Discovered via finge-rs fuzzing on 2026-05-22, profiled and written up
-2026-05-24. Tested against `smiles-parser` revision
-`0dbb557e` (current `main` after the bracket-atom valence fix landed on
-2026-05-23).
+2026-05-24. Original timings tested against `smiles-parser` revision
+`0dbb557e` (the bracket-atom valence fix from 2026-05-23 with the
+aromaticity perf bug still present).
 
 ## Bug
 
@@ -131,3 +134,31 @@ They can be lifted directly into a `smiles-parser` regression test.
 `-timeout=15` + `-timeout_exitcode=0` in `fuzz/run_tmux_fuzzers.sh`
 converts these into clean `timeout-*` artifacts without stopping the fuzz
 session. Will be removed once the upstream perf fix lands.
+
+## Post-fix verification (2026-05-24, revision `ba32bd63`)
+
+Re-running the same release-mode profile after the upstream fix:
+
+| atoms | before | after | speedup |
+|---:|---:|---:|---:|
+| 58 | 5.577 s | 47 ms | **118x** |
+| 85 | 3.040 s | 110 ms | 28x |
+| 72 | 850 ms | 138 ms | 6x |
+| 61 | 1.778 s | 91 ms | 20x |
+| 89 | 843 ms | 12 ms | 70x |
+| 73 | 1.343 s | 89 ms | 15x |
+| 69 | 1.282 s | 25 ms | 51x |
+
+Total corpus runtime: ~14 s → ~510 ms. Slowest case is 138 ms, well under
+any reasonable per-input fuzz timeout.
+
+Re-replaying every `timeout-*` and `oom-*` artifact in
+`fuzz/artifacts/` through `cargo +nightly fuzz run` with the
+launcher's `-timeout=15 -rss_limit_mb=8192` confirms all finish under 4 s
+wall (mostly libFuzzer startup; per-input runtime is sub-second). None
+re-trip the timeout or RSS thresholds.
+
+The `-timeout=15` + `-timeout_exitcode=0` knobs in the launcher are kept
+as defense-in-depth against future pathological inputs (same rationale
+as subql's `fuzz.sh`), but the smiles-parser-specific reason that
+motivated them is resolved.
