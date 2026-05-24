@@ -73,59 +73,54 @@ if tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
   tmux kill-session -t "${SESSION_NAME}"
 fi
 
-# Window 0: the four fingerprint-family fuzzers (one tile per family).
-tmux new-session -d -s "${SESSION_NAME}" -n "fingerprints" -c "${REPO_ROOT}" \
-  "bash -lc 'cargo fuzz run ecfp -- ${COMMON_ARGS}'"
+# Every fuzz target gets a tile in a single 'fuzz' window. The four
+# fingerprint-family fuzzers come first (so they sit in the top-left of
+# the tiled layout), followed by the eight per-mutator harnesses and the
+# MutatorMix composition harness.
+TARGETS=(
+  ecfp
+  atom_pair
+  topological_torsion
+  maccs
+  mutator_atomic_number
+  mutator_hypervalent
+  mutator_h_count
+  mutator_formal_charge
+  mutator_isotope
+  mutator_ring_flag
+  mutator_bond_type
+  mutator_topology
+  mutator_mix
+)
 
-tmux split-window -t "${SESSION_NAME}:0" -h -c "${REPO_ROOT}" \
-  "bash -lc 'cargo fuzz run atom_pair -- ${COMMON_ARGS}'"
+tmux new-session -d -s "${SESSION_NAME}" -n "fuzz" -c "${REPO_ROOT}" \
+  "bash -lc 'cargo fuzz run ${TARGETS[0]} -- ${COMMON_ARGS}'"
+# Show pane titles in the top border so each tile is labelled with its
+# harness name.
+tmux set-option -t "${SESSION_NAME}" pane-border-status top
+tmux select-pane -t "${SESSION_NAME}:0.0" -T "${TARGETS[0]}"
 
-tmux split-window -t "${SESSION_NAME}:0.0" -v -c "${REPO_ROOT}" \
-  "bash -lc 'cargo fuzz run topological_torsion -- ${COMMON_ARGS}'"
-
-tmux split-window -t "${SESSION_NAME}:0.1" -v -c "${REPO_ROOT}" \
-  "bash -lc 'cargo fuzz run maccs -- ${COMMON_ARGS}'"
-
-tmux select-layout -t "${SESSION_NAME}:0" tiled
-
-# Window 1: the eight per-mutator invariance fuzzers plus the
-# MutatorMix composition fuzzer (one tile per target).
-tmux new-window -t "${SESSION_NAME}" -n "mutators" -c "${REPO_ROOT}" \
-  "bash -lc 'cargo fuzz run mutator_atomic_number -- ${COMMON_ARGS}'"
-
-for target in mutator_hypervalent mutator_h_count mutator_formal_charge \
-              mutator_isotope mutator_ring_flag mutator_bond_type \
-              mutator_topology mutator_mix; do
-  tmux split-window -t "${SESSION_NAME}:1" -c "${REPO_ROOT}" \
+pane_index=0
+for target in "${TARGETS[@]:1}"; do
+  tmux split-window -t "${SESSION_NAME}:0" -c "${REPO_ROOT}" \
     "bash -lc 'cargo fuzz run ${target} -- ${COMMON_ARGS}'"
-  tmux select-layout -t "${SESSION_NAME}:1" tiled
+  pane_index=$((pane_index + 1))
+  tmux select-pane -t "${SESSION_NAME}:0.${pane_index}" -T "${target}"
+  tmux select-layout -t "${SESSION_NAME}:0" tiled
 done
 
-tmux select-window -t "${SESSION_NAME}:0"
+tmux select-pane -t "${SESSION_NAME}:0.0"
 tmux set-option -t "${SESSION_NAME}" remain-on-exit on
 
 cat <<EOF
-Started tmux session '${SESSION_NAME}' with two windows:
-  window 0 'fingerprints' (4 panes):
-    - ecfp
-    - atom_pair
-    - topological_torsion
-    - maccs
-  window 1 'mutators' (9 panes):
-    - mutator_atomic_number
-    - mutator_hypervalent
-    - mutator_h_count
-    - mutator_formal_charge
-    - mutator_isotope
-    - mutator_ring_flag
-    - mutator_bond_type
-    - mutator_topology
-    - mutator_mix
+Started tmux session '${SESSION_NAME}' with one window 'fuzz'
+(${#TARGETS[@]} panes, one per harness, each pane labelled in the top border):
+$(printf '  - %s\n' "${TARGETS[@]}")
 
 Re-attach later with:
   tmux attach -t ${SESSION_NAME}
 
-Switch windows: prefix + n (next) / prefix + p (prev) / prefix + 0/1
+Switch panes: prefix + arrow keys / prefix + q (then a tile number)
 
 libFuzzer defaults (appended after \`--\` to every \`cargo fuzz run\`):
   ${LIBFUZZER_DEFAULTS}
