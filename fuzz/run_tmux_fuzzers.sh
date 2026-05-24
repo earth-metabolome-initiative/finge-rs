@@ -55,6 +55,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 #                      (Tracked upstream in smiles-parser; until fixed,
 #                      the timeout converts these from OOMs into clean
 #                      timeout artifacts that the fuzzer can skip past.)
+#   -timeout_exitcode=0 make timeouts non-fatal: libFuzzer files the
+#                      `timeout-<hash>` artifact and KEEPS GOING instead
+#                      of exiting with code 70. We already know the
+#                      timeouts are upstream and not actionable in
+#                      finge-rs; without this knob, a single slow input
+#                      kills the entire fuzz session. Real panics still
+#                      stop the run via the default error_exitcode=77.
 #   -max_len=512       cap generated input size. `parse_smiles` already
 #                      rejects strings longer than 128 bytes, so a 512-byte
 #                      libfuzzer cap leaves ample room for the `arbitrary`
@@ -65,7 +72,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 #                      iterations; on this machine 8 GiB is ample headroom
 #                      and prevents code-71 false alarms when an adversarial
 #                      input briefly spikes RSS during a long session.
-LIBFUZZER_DEFAULTS="-timeout=15 -max_len=512 -rss_limit_mb=8192"
+LIBFUZZER_DEFAULTS="-timeout=15 -timeout_exitcode=0 -max_len=512 -rss_limit_mb=8192"
 COMMON_ARGS="${LIBFUZZER_DEFAULTS} ${FUZZ_RUN_ARGS:-}"
 
 if tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
