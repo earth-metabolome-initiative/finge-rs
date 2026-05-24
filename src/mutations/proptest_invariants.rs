@@ -90,19 +90,22 @@ where
     values
 }
 
-/// Asserts that, when `mutator` accepts `inner`, the sum of R0 atom
-/// invariants over non-ignored atoms differs from `baseline`. This is a
-/// collision-proof stand-in for "count-ECFP changed": folded ECFP at
-/// 65 536 bins can coincidentally fold two distinct 32-bit invariants to
-/// the same bin (see the `BrOBr` / `C` fuzz regressions), whereas the
-/// unfolded 32-bit invariant sum has a 1/2³² collision rate. It still
-/// catches the real bug class — a mutator that writes to an ECFP-ignored
-/// atom would leave the visible sum unchanged.
+/// Asserts that, when `mutator` accepts `inner`, the per-atom R0 invariant
+/// vector over non-ignored atoms (compared position-wise) differs from
+/// `baseline`. Collision-proof: two distinct vecs differ at at least one
+/// position by construction.
+///
+/// A previous sum-based aggregate was too weak under composition. Under
+/// [`crate::MutatorMix::sample`] with k >= 2, two `ImpossibleIsotopeMutator`
+/// writes on different atoms can produce per-atom invariant deltas that
+/// sum to zero (see `mutator_mix/crash-18d54c65…` — `ssI` + seed
+/// 6_733_535_862_861_618_035, with atom 0 shifted `-2287` and atom 1
+/// shifted `+2287`). The position-aware vec catches this directly.
 fn check_ecfp_hash_changes<'a, M>(
     mutator: &M,
     label: &str,
     inner: SmilesRdkitGraph<'a>,
-    baseline_visible_sum: u32,
+    baseline_visible_signature: &[u32],
     seed: u64,
 ) -> Result<(), TestCaseError>
 where
@@ -111,11 +114,11 @@ where
     let mut wrapper = InvalidatedGraph::new(inner);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     if mutator.mutate_in_place(&mut wrapper, &mut rng).is_ok() {
-        let mutated_sum = visible_invariant_sum(&wrapper);
+        let mutated = visible_invariant_signature(&wrapper);
         prop_assert_ne!(
-            baseline_visible_sum,
-            mutated_sum,
-            "{} left the visible R0 invariant sum unchanged (seed = {})",
+            baseline_visible_signature,
+            mutated.as_slice(),
+            "{} left the visible R0 invariant signature unchanged (seed = {})",
             label,
             seed,
         );
@@ -123,9 +126,8 @@ where
     Ok(())
 }
 
-/// Sum of R0 invariants over ECFP-non-ignored atoms. See
-/// `check_ecfp_hash_changes` for the rationale.
-fn visible_invariant_sum<G>(graph: &G) -> u32
+/// Per-atom R0 invariants over ECFP-non-ignored atoms, in atom-id order.
+fn visible_invariant_signature<G>(graph: &G) -> Vec<u32>
 where
     G: EcfpGraph<NodeId = usize>,
     G::NodeSymbol: MolecularAtom,
@@ -133,20 +135,20 @@ where
     (0..graph.atom_count())
         .filter(|&id| !graph.ecfp_atom_is_ignored(id))
         .map(|id| graph.ecfp_atom_invariant(id, true))
-        .fold(0_u32, |acc, v| acc.wrapping_add(v))
+        .collect()
 }
 
-/// Sum of bond invariants over undirected bonds (each bond counted once),
-/// used by the bond-channel mutator path which leaves atom invariants
-/// untouched by construction.
-fn visible_bond_invariant_sum<G>(graph: &G) -> u32
+/// Per-bond invariants over undirected bonds (each bond once), in
+/// `(min, max)` endpoint order. Used by the bond-channel mutator path,
+/// which leaves atom invariants untouched by construction.
+fn visible_bond_invariant_signature<G>(graph: &G) -> Vec<u32>
 where
     G: EcfpGraph<NodeId = usize>,
     G::NodeSymbol: MolecularAtom,
     G::Bond: crate::traits::MolecularBond<NodeId = usize>,
 {
     use crate::traits::MolecularBond as _;
-    let mut sum: u32 = 0;
+    let mut bonds = Vec::new();
     for source in 0..graph.atom_count() {
         for bond in graph.bonds(source) {
             let other = if bond.source() == source {
@@ -157,20 +159,21 @@ where
                 continue;
             };
             if other > source {
-                sum = sum.wrapping_add(graph.ecfp_bond_invariant(&bond, true));
+                bonds.push((source, other, graph.ecfp_bond_invariant(&bond, true)));
             }
         }
     }
-    sum
+    bonds.sort();
+    bonds.into_iter().map(|(_, _, inv)| inv).collect()
 }
 
 /// Variant of [`check_ecfp_hash_changes`] for the bond-channel mutator:
-/// compares the sum of bond invariants rather than atom R0 invariants.
+/// compares the bond invariant signature rather than atom R0 invariants.
 fn check_bond_invariant_changes<'a, M>(
     mutator: &M,
     label: &str,
     inner: SmilesRdkitGraph<'a>,
-    baseline_bond_sum: u32,
+    baseline_bond_signature: &[u32],
     seed: u64,
 ) -> Result<(), TestCaseError>
 where
@@ -179,11 +182,11 @@ where
     let mut wrapper = InvalidatedGraph::new(inner);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     if mutator.mutate_in_place(&mut wrapper, &mut rng).is_ok() {
-        let mutated_sum = visible_bond_invariant_sum(&wrapper);
+        let mutated = visible_bond_invariant_signature(&wrapper);
         prop_assert_ne!(
-            baseline_bond_sum,
-            mutated_sum,
-            "{} left the bond invariant sum unchanged (seed = {})",
+            baseline_bond_signature,
+            mutated.as_slice(),
+            "{} left the bond invariant signature unchanged (seed = {})",
             label,
             seed,
         );
@@ -259,19 +262,19 @@ proptest! {
         let parsed: smiles_parser::smiles::Smiles = smiles.parse()
             .expect("fixture SMILES should parse");
         let inner = scratch.prepare(&parsed);
-        let baseline = visible_invariant_sum(&inner);
-        let baseline_bonds = visible_bond_invariant_sum(&inner);
+        let baseline = visible_invariant_signature(&inner);
+        let baseline_bonds = visible_bond_invariant_signature(&inner);
 
-        check_ecfp_hash_changes(&ImpossibleAtomicNumberMutator, "ImpossibleAtomicNumberMutator", inner, baseline, seed)?;
-        check_ecfp_hash_changes(&HypervalentMutator, "HypervalentMutator", inner, baseline, seed)?;
-        check_ecfp_hash_changes(&ImpossibleHCountMutator, "ImpossibleHCountMutator", inner, baseline, seed)?;
-        check_ecfp_hash_changes(&ImpossibleChargeMutator, "ImpossibleChargeMutator", inner, baseline, seed)?;
-        check_ecfp_hash_changes(&ImpossibleIsotopeMutator, "ImpossibleIsotopeMutator", inner, baseline, seed)?;
-        check_ecfp_hash_changes(&ImpossibleRingFlagMutator, "ImpossibleRingFlagMutator", inner, baseline, seed)?;
+        check_ecfp_hash_changes(&ImpossibleAtomicNumberMutator, "ImpossibleAtomicNumberMutator", inner, &baseline, seed)?;
+        check_ecfp_hash_changes(&HypervalentMutator, "HypervalentMutator", inner, &baseline, seed)?;
+        check_ecfp_hash_changes(&ImpossibleHCountMutator, "ImpossibleHCountMutator", inner, &baseline, seed)?;
+        check_ecfp_hash_changes(&ImpossibleChargeMutator, "ImpossibleChargeMutator", inner, &baseline, seed)?;
+        check_ecfp_hash_changes(&ImpossibleIsotopeMutator, "ImpossibleIsotopeMutator", inner, &baseline, seed)?;
+        check_ecfp_hash_changes(&ImpossibleRingFlagMutator, "ImpossibleRingFlagMutator", inner, &baseline, seed)?;
         // Bond-channel mutator leaves atom R0 invariants untouched by
-        // construction; check the bond invariant sum instead.
-        check_bond_invariant_changes(&ImpossibleBondTypeMutator, "ImpossibleBondTypeMutator", inner, baseline_bonds, seed)?;
-        check_ecfp_hash_changes(&TopologicalPathologyMutator, "TopologicalPathologyMutator", inner, baseline, seed)?;
+        // construction; check the bond invariant signature instead.
+        check_bond_invariant_changes(&ImpossibleBondTypeMutator, "ImpossibleBondTypeMutator", inner, &baseline_bonds, seed)?;
+        check_ecfp_hash_changes(&TopologicalPathologyMutator, "TopologicalPathologyMutator", inner, &baseline, seed)?;
     }
 
     #[test]

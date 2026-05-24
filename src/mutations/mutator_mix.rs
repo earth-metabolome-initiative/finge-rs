@@ -868,6 +868,50 @@ mod tests {
     }
 
     #[test]
+    fn fuzz_regression_composed_isotope_writes_dont_cancel_invariants() {
+        // ssI + seed 6_733_535_862_861_618_035 composes two
+        // ImpossibleIsotopeMutator slots: atom 0 gets delta_mass = 11027
+        // (R0 invariant shifts by -2287) and atom 1 gets delta_mass = 2327
+        // (R0 invariant shifts by +2287). A naive sum aggregate of R0
+        // invariants over non-ignored atoms would see no change. Pin a
+        // position-aware check: the per-atom invariant vector must differ.
+        use crate::{EcfpGraph, traits::MolecularGraph as _};
+        let parsed: smiles_parser::smiles::Smiles = "ssI".parse().expect("parse");
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&parsed);
+        let baseline_invariants: alloc::vec::Vec<u32> = (0..graph.atom_count())
+            .filter(|&id| !graph.ecfp_atom_is_ignored(id))
+            .map(|id| graph.ecfp_atom_invariant(id, true))
+            .collect();
+        let baseline_sum: u32 = baseline_invariants
+            .iter()
+            .copied()
+            .fold(0u32, u32::wrapping_add);
+
+        let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();
+        let mut rng = ChaCha8Rng::seed_from_u64(6_733_535_862_861_618_035);
+        if let Ok((wrapper, _label)) = mix.sample(graph, &mut rng) {
+            let mutated_invariants: alloc::vec::Vec<u32> = (0..wrapper.atom_count())
+                .filter(|&id| !wrapper.ecfp_atom_is_ignored(id))
+                .map(|id| wrapper.ecfp_atom_invariant(id, true))
+                .collect();
+            let mutated_sum: u32 = mutated_invariants
+                .iter()
+                .copied()
+                .fold(0u32, u32::wrapping_add);
+            // The position-aware vector must differ even when the sum doesn't.
+            assert_ne!(
+                baseline_invariants, mutated_invariants,
+                "per-atom invariant vector should differ after the composition",
+            );
+            // The historical false negative was that sums happened to match.
+            // We don't assert which direction is true on every seed, just
+            // document the trap by comparing both.
+            let _ = (baseline_sum, mutated_sum);
+        }
+    }
+
+    #[test]
     fn fuzz_regression_composition_cancellation_yields_err() {
         // `c8ccccccc8c` + seed 14_612_714_913_291_461_578 originally
         // produced an Ok((wrapper, label)) where the wrapper was

@@ -284,16 +284,22 @@ where
     bonds
 }
 
-/// Sums the radius-0 ECFP atom invariants of every *non-ignored* atom,
-/// wrapping on overflow. Used by the per-mutator harnesses as a
-/// collision-proof stand-in for the previous "count-ECFP unchanged" check:
-/// folded ECFP at 65 536 bins false-positives on ~1.5e-5 of mutations due
-/// to low-bit hash collisions (see `BrOBr` / `[84Ga][61Cu]` / `B[ClH]` /
-/// `C` regressions); the per-atom 32-bit invariant sum is essentially
-/// collision-free (rate ≈ 1/2³²) and still catches the real bug class
-/// "mutator wrote to an atom that ECFP doesn't see" — a write to an
-/// ignored atom leaves the visible-invariant sum unchanged.
-pub fn visible_invariant_sum<G>(graph: &G) -> u32
+/// Collects the radius-0 ECFP atom invariants of every *non-ignored* atom
+/// in atom-id order. Comparing two such vecs is collision-free: if any
+/// visible atom's R0 invariant differs, the vecs differ at that position.
+///
+/// Replaces a previous sum-based aggregate that was too weak under
+/// composition: under [`crate::MutatorMix::sample`] with k >= 2, two
+/// `ImpossibleIsotopeMutator` writes on different atoms can produce
+/// per-atom invariant deltas that sum to zero (see
+/// `mutator_mix/crash-18d54c65…` — `ssI` + seed
+/// 6_733_535_862_861_618_035, where atom 0 shifted by `-2287` and atom 1
+/// by `+2287`). The position-aware vec catches this directly.
+///
+/// Still catches the original "mutator wrote to an atom that ECFP doesn't
+/// see" bug class: a write to an ignored atom is filtered out of the vec
+/// and so leaves the signature unchanged.
+pub fn visible_invariant_signature<G>(graph: &G) -> Vec<u32>
 where
     G: EcfpGraph<NodeId = usize>,
     G::NodeSymbol: MolecularAtom,
@@ -301,7 +307,7 @@ where
     (0..graph.atom_count())
         .filter(|&id| !graph.ecfp_atom_is_ignored(id))
         .map(|id| graph.ecfp_atom_invariant(id, true))
-        .fold(0_u32, |acc, v| acc.wrapping_add(v))
+        .collect()
 }
 
 /// Counts atom indices whose field tuples differ between two graphs of equal
@@ -428,9 +434,9 @@ pub fn fuzz_impossible_atomic_number_invariants(smiles: Smiles, seed: u64) {
             // atom ECFP cannot see (e.g. one skipped by
             // `pick_unignored_atom`).
             assert_ne!(
-                visible_invariant_sum(&graph),
-                visible_invariant_sum(&wrapper),
-                "ImpossibleAtomicNumberMutator: visible R0 invariant sum unchanged \
+                visible_invariant_signature(&graph),
+                visible_invariant_signature(&wrapper),
+                "ImpossibleAtomicNumberMutator: visible R0 invariant signature unchanged \
                  — likely wrote to an ECFP-ignored atom",
             );
 
@@ -491,9 +497,9 @@ pub fn fuzz_hypervalent_invariants(smiles: Smiles, seed: u64) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
             assert_ne!(
-                visible_invariant_sum(&graph),
-                visible_invariant_sum(&wrapper),
-                "HypervalentMutator: visible R0 invariant sum unchanged — see \
+                visible_invariant_signature(&graph),
+                visible_invariant_signature(&wrapper),
+                "HypervalentMutator: visible R0 invariant signature unchanged — see \
                  `fuzz_impossible_atomic_number_invariants` for the rationale",
             );
             assert!(
@@ -546,9 +552,9 @@ pub fn fuzz_impossible_h_count_invariants(smiles: Smiles, seed: u64) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
             assert_ne!(
-                visible_invariant_sum(&graph),
-                visible_invariant_sum(&wrapper),
-                "ImpossibleHCountMutator: visible R0 invariant sum unchanged",
+                visible_invariant_signature(&graph),
+                visible_invariant_signature(&wrapper),
+                "ImpossibleHCountMutator: visible R0 invariant signature unchanged",
             );
             assert!(
                 ImpossibleHCountPredicate.check(&wrapper),
@@ -600,9 +606,9 @@ pub fn fuzz_impossible_charge_invariants(smiles: Smiles, seed: u64) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
             assert_ne!(
-                visible_invariant_sum(&graph),
-                visible_invariant_sum(&wrapper),
-                "ImpossibleChargeMutator: visible R0 invariant sum unchanged",
+                visible_invariant_signature(&graph),
+                visible_invariant_signature(&wrapper),
+                "ImpossibleChargeMutator: visible R0 invariant signature unchanged",
             );
             assert!(
                 ImpossibleChargePredicate.check(&wrapper),
@@ -657,9 +663,9 @@ pub fn fuzz_impossible_isotope_invariants(smiles: Smiles, seed: u64) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
             assert_ne!(
-                visible_invariant_sum(&graph),
-                visible_invariant_sum(&wrapper),
-                "ImpossibleIsotopeMutator: visible R0 invariant sum unchanged",
+                visible_invariant_signature(&graph),
+                visible_invariant_signature(&wrapper),
+                "ImpossibleIsotopeMutator: visible R0 invariant signature unchanged",
             );
             assert!(
                 ImpossibleIsotopePredicate.check(&wrapper),
@@ -714,9 +720,9 @@ pub fn fuzz_impossible_ring_flag_invariants(smiles: Smiles, seed: u64) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
             assert_ne!(
-                visible_invariant_sum(&graph),
-                visible_invariant_sum(&wrapper),
-                "ImpossibleRingFlagMutator: visible R0 invariant sum unchanged",
+                visible_invariant_signature(&graph),
+                visible_invariant_signature(&wrapper),
+                "ImpossibleRingFlagMutator: visible R0 invariant signature unchanged",
             );
             assert!(
                 ImpossibleRingFlagPredicate.check(&wrapper),
@@ -763,7 +769,7 @@ pub fn fuzz_impossible_bond_type_invariants(smiles: Smiles, seed: u64) {
     match ImpossibleBondTypeMutator.mutate_in_place(&mut wrapper, &mut rng) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
-            // No `visible_invariant_sum` check here — the bond-channel
+            // No `visible_invariant_signature` check here — the bond-channel
             // mutator must NOT change any atom's R0 invariant (asserted
             // separately below via `assert_mutator_no_atom_diff`). The
             // bond-side coverage comes from `assert_mutator_minimal_diff_bonds`
@@ -820,9 +826,9 @@ pub fn fuzz_topological_pathology_invariants(smiles: Smiles, seed: u64) {
         Err(err) => assert_well_defined_error(err),
         Ok(()) => {
             assert_ne!(
-                visible_invariant_sum(&graph),
-                visible_invariant_sum(&wrapper),
-                "TopologicalPathologyMutator: visible R0 invariant sum unchanged",
+                visible_invariant_signature(&graph),
+                visible_invariant_signature(&wrapper),
+                "TopologicalPathologyMutator: visible R0 invariant signature unchanged",
             );
             assert!(
                 TopologicalPathologyPredicate.check(&wrapper),
@@ -908,7 +914,7 @@ pub fn fuzz_mutator_mix_invariants(smiles: Smiles, seed: u64) {
             // would silently accept a hypothetical composition whose every
             // override landed on ECFP-ignored atoms.
             let invariant_changed =
-                visible_invariant_sum(&graph) != visible_invariant_sum(&wrapper);
+                visible_invariant_signature(&graph) != visible_invariant_signature(&wrapper);
             let bonds_changed = bond_invariant_signature(&graph) != bond_invariant_signature(&wrapper);
             assert!(
                 invariant_changed || bonds_changed,
