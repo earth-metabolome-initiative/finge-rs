@@ -35,28 +35,15 @@ use proptest::{prelude::*, test_runner::TestCaseError};
 use rand_chacha::{ChaCha8Rng, rand_core::SeedableRng};
 
 use crate::{
-    CountEcfpFingerprint, EcfpGraph, Fingerprint, HypervalentMutator, HypervalentPredicate,
-    ImpossibleAtomicNumberMutator, ImpossibleAtomicNumberPredicate, ImpossibleBondTypeMutator,
-    ImpossibleBondTypePredicate, ImpossibleChargeMutator, ImpossibleChargePredicate,
-    ImpossibleHCountMutator, ImpossibleHCountPredicate, ImpossibleIsotopeMutator,
-    ImpossibleIsotopePredicate, ImpossibleRingFlagMutator, ImpossibleRingFlagPredicate,
-    InvalidatedGraph, MolecularAtom, Mutator, MutatorMix, PredicateClass,
-    TopologicalPathologyMutator, TopologicalPathologyPredicate, ViolationClass, ViolationPredicate,
+    EcfpGraph, HypervalentMutator, HypervalentPredicate, ImpossibleAtomicNumberMutator,
+    ImpossibleAtomicNumberPredicate, ImpossibleBondTypeMutator, ImpossibleBondTypePredicate,
+    ImpossibleChargeMutator, ImpossibleChargePredicate, ImpossibleHCountMutator,
+    ImpossibleHCountPredicate, ImpossibleIsotopeMutator, ImpossibleIsotopePredicate,
+    ImpossibleRingFlagMutator, ImpossibleRingFlagPredicate, InvalidatedGraph, MolecularAtom,
+    Mutator, MutatorMix, PredicateClass, TopologicalPathologyMutator,
+    TopologicalPathologyPredicate, ViolationClass, ViolationPredicate,
     smiles_support_impl::{SmilesRdkitGraph, SmilesRdkitScratch},
 };
-
-/// Fingerprint configuration used by the ECFP-changes property.
-///
-/// Counts (not just presence) and a large fp_size make fold-collision
-/// masking astronomically unlikely: every changed feature hash either
-/// increments a new slot or changes the count at an existing one. A pure
-/// bit-set comparison at fp_size = 2048 was *not* a sound invariant — for
-/// CC(=O)O with seed 14865529113730674949 the bit set after an
-/// `ImpossibleHCountMutator` mutation happened to coincide with the
-/// baseline, even though the underlying field tuple had clearly changed.
-fn make_fingerprint() -> CountEcfpFingerprint {
-    CountEcfpFingerprint::new(2, 65_536)
-}
 
 /// Canonical positive corpus for properties (1) and (2). Diverse enough that
 /// every mutator finds at least one suitable input.
@@ -103,14 +90,19 @@ where
     values
 }
 
-/// Asserts that, when `mutator` accepts `inner`, the count-ECFP at radius 2
-/// differs from `baseline`. Counts (not just presence) eliminate the
-/// fold-collision masking that bit fingerprints are vulnerable to.
+/// Asserts that, when `mutator` accepts `inner`, the sum of R0 atom
+/// invariants over non-ignored atoms differs from `baseline`. This is a
+/// collision-proof stand-in for "count-ECFP changed": folded ECFP at
+/// 65 536 bins can coincidentally fold two distinct 32-bit invariants to
+/// the same bin (see the `BrOBr` / `C` fuzz regressions), whereas the
+/// unfolded 32-bit invariant sum has a 1/2³² collision rate. It still
+/// catches the real bug class — a mutator that writes to an ECFP-ignored
+/// atom would leave the visible sum unchanged.
 fn check_ecfp_hash_changes<'a, M>(
     mutator: &M,
     label: &str,
     inner: SmilesRdkitGraph<'a>,
-    baseline: &crate::CountFingerprint,
+    baseline_visible_sum: u32,
     seed: u64,
 ) -> Result<(), TestCaseError>
 where
@@ -119,11 +111,79 @@ where
     let mut wrapper = InvalidatedGraph::new(inner);
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     if mutator.mutate_in_place(&mut wrapper, &mut rng).is_ok() {
-        let mutated_fp = make_fingerprint().compute(&wrapper);
+        let mutated_sum = visible_invariant_sum(&wrapper);
         prop_assert_ne!(
-            baseline,
-            &mutated_fp,
-            "{} produced unchanged count-ECFP at radius 2 (seed = {})",
+            baseline_visible_sum,
+            mutated_sum,
+            "{} left the visible R0 invariant sum unchanged (seed = {})",
+            label,
+            seed,
+        );
+    }
+    Ok(())
+}
+
+/// Sum of R0 invariants over ECFP-non-ignored atoms. See
+/// `check_ecfp_hash_changes` for the rationale.
+fn visible_invariant_sum<G>(graph: &G) -> u32
+where
+    G: EcfpGraph<NodeId = usize>,
+    G::NodeSymbol: MolecularAtom,
+{
+    (0..graph.atom_count())
+        .filter(|&id| !graph.ecfp_atom_is_ignored(id))
+        .map(|id| graph.ecfp_atom_invariant(id, true))
+        .fold(0_u32, |acc, v| acc.wrapping_add(v))
+}
+
+/// Sum of bond invariants over undirected bonds (each bond counted once),
+/// used by the bond-channel mutator path which leaves atom invariants
+/// untouched by construction.
+fn visible_bond_invariant_sum<G>(graph: &G) -> u32
+where
+    G: EcfpGraph<NodeId = usize>,
+    G::NodeSymbol: MolecularAtom,
+    G::Bond: crate::traits::MolecularBond<NodeId = usize>,
+{
+    use crate::traits::MolecularBond as _;
+    let mut sum: u32 = 0;
+    for source in 0..graph.atom_count() {
+        for bond in graph.bonds(source) {
+            let other = if bond.source() == source {
+                bond.target()
+            } else if bond.target() == source {
+                bond.source()
+            } else {
+                continue;
+            };
+            if other > source {
+                sum = sum.wrapping_add(graph.ecfp_bond_invariant(&bond, true));
+            }
+        }
+    }
+    sum
+}
+
+/// Variant of [`check_ecfp_hash_changes`] for the bond-channel mutator:
+/// compares the sum of bond invariants rather than atom R0 invariants.
+fn check_bond_invariant_changes<'a, M>(
+    mutator: &M,
+    label: &str,
+    inner: SmilesRdkitGraph<'a>,
+    baseline_bond_sum: u32,
+    seed: u64,
+) -> Result<(), TestCaseError>
+where
+    M: Mutator<SmilesRdkitGraph<'a>>,
+{
+    let mut wrapper = InvalidatedGraph::new(inner);
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    if mutator.mutate_in_place(&mut wrapper, &mut rng).is_ok() {
+        let mutated_sum = visible_bond_invariant_sum(&wrapper);
+        prop_assert_ne!(
+            baseline_bond_sum,
+            mutated_sum,
+            "{} left the bond invariant sum unchanged (seed = {})",
             label,
             seed,
         );
@@ -199,16 +259,19 @@ proptest! {
         let parsed: smiles_parser::smiles::Smiles = smiles.parse()
             .expect("fixture SMILES should parse");
         let inner = scratch.prepare(&parsed);
-        let baseline = make_fingerprint().compute(&inner);
+        let baseline = visible_invariant_sum(&inner);
+        let baseline_bonds = visible_bond_invariant_sum(&inner);
 
-        check_ecfp_hash_changes(&ImpossibleAtomicNumberMutator, "ImpossibleAtomicNumberMutator", inner, &baseline, seed)?;
-        check_ecfp_hash_changes(&HypervalentMutator, "HypervalentMutator", inner, &baseline, seed)?;
-        check_ecfp_hash_changes(&ImpossibleHCountMutator, "ImpossibleHCountMutator", inner, &baseline, seed)?;
-        check_ecfp_hash_changes(&ImpossibleChargeMutator, "ImpossibleChargeMutator", inner, &baseline, seed)?;
-        check_ecfp_hash_changes(&ImpossibleIsotopeMutator, "ImpossibleIsotopeMutator", inner, &baseline, seed)?;
-        check_ecfp_hash_changes(&ImpossibleRingFlagMutator, "ImpossibleRingFlagMutator", inner, &baseline, seed)?;
-        check_ecfp_hash_changes(&ImpossibleBondTypeMutator, "ImpossibleBondTypeMutator", inner, &baseline, seed)?;
-        check_ecfp_hash_changes(&TopologicalPathologyMutator, "TopologicalPathologyMutator", inner, &baseline, seed)?;
+        check_ecfp_hash_changes(&ImpossibleAtomicNumberMutator, "ImpossibleAtomicNumberMutator", inner, baseline, seed)?;
+        check_ecfp_hash_changes(&HypervalentMutator, "HypervalentMutator", inner, baseline, seed)?;
+        check_ecfp_hash_changes(&ImpossibleHCountMutator, "ImpossibleHCountMutator", inner, baseline, seed)?;
+        check_ecfp_hash_changes(&ImpossibleChargeMutator, "ImpossibleChargeMutator", inner, baseline, seed)?;
+        check_ecfp_hash_changes(&ImpossibleIsotopeMutator, "ImpossibleIsotopeMutator", inner, baseline, seed)?;
+        check_ecfp_hash_changes(&ImpossibleRingFlagMutator, "ImpossibleRingFlagMutator", inner, baseline, seed)?;
+        // Bond-channel mutator leaves atom R0 invariants untouched by
+        // construction; check the bond invariant sum instead.
+        check_bond_invariant_changes(&ImpossibleBondTypeMutator, "ImpossibleBondTypeMutator", inner, baseline_bonds, seed)?;
+        check_ecfp_hash_changes(&TopologicalPathologyMutator, "TopologicalPathologyMutator", inner, baseline, seed)?;
     }
 
     #[test]
