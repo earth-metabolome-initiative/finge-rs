@@ -31,17 +31,17 @@ jobs:
       - name: Run default test suite
         run: cargo test
 
-      - name: Run smiles-support test suite
-        run: cargo test --features smiles-support
+      - name: Run all-features test suite
+        run: cargo test --all-features
 
       - name: Check benchmark target
-        run: cargo bench --bench ecfp --features smiles-support --no-run
+        run: cargo bench --bench ecfp --no-run
 
       - name: Check AtomPair benchmark target
-        run: cargo bench --bench atom_pair --features smiles-support --no-run
+        run: cargo bench --bench atom_pair --no-run
 
       - name: Check TopologicalTorsion benchmark target
-        run: cargo bench --bench topological_torsion --features smiles-support --no-run
+        run: cargo bench --bench topological_torsion --no-run
 
       - name: Check RDK benchmark target
-        run: cargo bench --bench rdk --features smiles-support --no-run
+        run: cargo bench --bench rdk --no-run

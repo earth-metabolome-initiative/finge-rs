@@ -1,5 +1,7 @@
 use alloc::{vec, vec::Vec};
 
+use minhash_rs::prelude::{Maximal, Min, MinHash, Primitive, XorShift};
+
 use crate::{
     atom_invariant_fields::morgan_hash_combine as hash_combine,
     bit_fingerprint::BitFingerprint,
@@ -194,6 +196,41 @@ impl EcfpFingerprint {
         }
     }
 
+    /// Builds a MinHash sketch of the unfolded ECFP feature set (the raw Morgan
+    /// identifiers, before folding).
+    ///
+    /// Two sketches' `estimate_jaccard_index` approximates the Tanimoto of the
+    /// molecules' ECFP feature sets, so ECFP plugs into
+    /// [`LshIndex`](crate::LshIndex) exactly like MAP4. `Word` selects the
+    /// register width and `N` the number of permutations, e.g.
+    /// `fp.minhash::<_, u32, 1024>(&graph)`.
+    ///
+    /// ```
+    /// use finge_rs::EcfpFingerprint;
+    /// use finge_rs::smiles_support::SmilesRdkitScratch;
+    /// use smiles_parser::smiles::Smiles;
+    ///
+    /// let molecule: Smiles = "c1ccccc1O".parse().unwrap();
+    /// let mut scratch = SmilesRdkitScratch::default();
+    /// let graph = scratch.prepare(&molecule);
+    ///
+    /// let signature = EcfpFingerprint::new(2, 2048).minhash::<_, u32, 1024>(&graph);
+    /// assert_eq!(signature.estimate_jaccard_index(&signature), 1.0);
+    /// ```
+    #[must_use]
+    pub fn minhash<G, Word, const N: usize>(&self, graph: &G) -> MinHash<Word, N>
+    where
+        G: EcfpGraph<NodeId = usize>,
+        G::NodeSymbol: MolecularAtom,
+        G::Bond: MolecularBond<NodeId = usize>,
+        Word: Min + Clone + Eq + Maximal + XorShift,
+        u64: Primitive<Word>,
+    {
+        let mut features: Vec<u32> = Vec::new();
+        self.emit_hashes_with_layer(graph, |_layer, hash| features.push(hash));
+        features.iter().collect()
+    }
+
     #[inline]
     fn fold_hashes<G, F>(&self, graph: &G, mut emit_folded_index: F)
     where
@@ -228,6 +265,20 @@ impl EcfpFingerprint {
                 emit_folded_index(layer, hash as usize % fp_size)
             });
         }
+    }
+}
+
+impl<G, Word, const N: usize> crate::lsh::Sketcher<G, Word, N> for EcfpFingerprint
+where
+    G: EcfpGraph<NodeId = usize>,
+    G::NodeSymbol: MolecularAtom,
+    G::Bond: MolecularBond<NodeId = usize>,
+    Word: Min + Clone + Eq + Maximal + XorShift,
+    u64: Primitive<Word>,
+{
+    #[inline]
+    fn sketch(&self, item: &G) -> MinHash<Word, N> {
+        self.minhash(item)
     }
 }
 
@@ -538,6 +589,10 @@ mod tests {
         bond::{Bond, bond_edge::BondEdge},
         smiles::Smiles,
     };
+
+    use std::collections::HashSet;
+
+    use minhash_rs::prelude::MinHash;
 
     use super::{
         CountEcfpFingerprint, EcfpFingerprint, LayeredCountEcfpFingerprint, adjacency, other_node,
@@ -1065,6 +1120,76 @@ mod tests {
                 .map(|neighbor| (neighbor.other, neighbor.edge_idx, neighbor.bond_invariant))
                 .collect::<Vec<_>>(),
             vec![(1, 1, 1)]
+        );
+    }
+
+    fn set_jaccard(a: &HashSet<u32>, b: &HashSet<u32>) -> f64 {
+        if a.is_empty() && b.is_empty() {
+            return 1.0;
+        }
+        let intersection = a.iter().filter(|item| b.contains(*item)).count();
+        intersection as f64 / (a.len() + b.len() - intersection) as f64
+    }
+
+    #[test]
+    fn ecfp_minhash_self_identity_and_determinism() {
+        let mol: Smiles = "OCC1OC(O)C(O)C(O)C1O".parse().expect("parse");
+        let mut scratch = SmilesRdkitScratch::default();
+        let graph = scratch.prepare(&mol);
+        let fingerprint = EcfpFingerprint::new(2, 2048);
+        let first = fingerprint.minhash::<_, u32, 512>(&graph);
+        let second = fingerprint.minhash::<_, u32, 512>(&graph);
+        assert_eq!(first, second);
+        assert_eq!(first.estimate_jaccard_index(&second), 1.0);
+    }
+
+    /// ECFP MinHash `estimate_jaccard_index` tracks the exact Tanimoto of the
+    /// unfolded Morgan feature sets within MinHash variance at 512 permutations.
+    #[test]
+    fn ecfp_minhash_estimates_feature_jaccard() {
+        let fixture = rdkit_ecfp_fixture();
+        let fingerprint = EcfpFingerprint::new(2, 2048);
+
+        let mut sketches: Vec<MinHash<u32, 512>> = Vec::with_capacity(fixture.molecules.len());
+        let mut sets: Vec<HashSet<u32>> = Vec::with_capacity(fixture.molecules.len());
+        for smiles in &fixture.molecules {
+            let mol: Smiles = smiles.parse().expect("fixture SMILES should parse");
+            let mut scratch = SmilesRdkitScratch::default();
+            let graph = scratch.prepare(&mol);
+            sketches.push(fingerprint.minhash::<_, u32, 512>(&graph));
+            let mut features = HashSet::new();
+            fingerprint.emit_hashes_with_layer(&graph, |_layer, hash| {
+                features.insert(hash);
+            });
+            sets.push(features);
+        }
+
+        let count = sets.len();
+        let mut pairs = 0usize;
+        let mut total_error = 0.0_f64;
+        let mut max_error = 0.0_f64;
+        for &stride in &[1usize, 7, 53] {
+            for i in 0..count {
+                let j = i + stride;
+                if j >= count {
+                    break;
+                }
+                let estimate = sketches[i].estimate_jaccard_index(&sketches[j]);
+                let exact = set_jaccard(&sets[i], &sets[j]);
+                let error = (estimate - exact).abs();
+                pairs += 1;
+                total_error += error;
+                max_error = max_error.max(error);
+            }
+        }
+
+        let mean_error = total_error / pairs as f64;
+        std::eprintln!(
+            "ECFP minhash vs exact: pairs={pairs} mean_err={mean_error:.6} max_err={max_error:.6}"
+        );
+        assert!(
+            mean_error < 0.02,
+            "ECFP MinHash strayed from exact Tanimoto"
         );
     }
 }

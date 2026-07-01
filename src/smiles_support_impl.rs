@@ -1,4 +1,4 @@
-use alloc::{vec, vec::Vec};
+use alloc::{string::String, vec, vec::Vec};
 
 use elements_rs::{AllowedValences, ValenceElectrons, isotopes::RelativeAtomicMass};
 use geometric_traits::traits::{Graph, MonopartiteGraph, MonoplexGraph, TypedNode};
@@ -14,7 +14,7 @@ use smiles_parser::{
 use crate::{
     atom_invariant_fields::AtomInvariantFields,
     traits::{
-        AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph,
+        AtomPairGraph, EcfpGraph, Map4Graph, MolecularAtom, MolecularBond, MolecularGraph,
         RdkFingerprintGraph, TopologicalTorsionGraph,
     },
 };
@@ -1182,6 +1182,20 @@ impl EcfpGraph for SmilesRdkitGraph<'_> {
     #[inline]
     fn ecfp_bond_invariant(&self, bond: &Self::Bond, use_bond_types: bool) -> u32 {
         rdkit_bond_code(self.smiles, *bond, use_bond_types)
+    }
+}
+
+impl Map4Graph for Smiles {
+    #[inline]
+    fn map4_environment_label(&self, center: usize, radius: usize) -> Option<String> {
+        self.rooted_environment_smiles(center, radius, false)
+    }
+}
+
+impl Map4Graph for SmilesRdkitGraph<'_> {
+    #[inline]
+    fn map4_environment_label(&self, center: usize, radius: usize) -> Option<String> {
+        self.smiles.rooted_environment_smiles(center, radius, false)
     }
 }
 

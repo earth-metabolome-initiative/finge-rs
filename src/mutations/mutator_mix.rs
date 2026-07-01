@@ -144,8 +144,6 @@ where
     /// # Example
     ///
     /// ```
-    /// # #[cfg(feature = "smiles-support")]
-    /// # fn run() {
     /// use finge_rs::{
     ///     CountEcfpFingerprint, Fingerprint, MutatorMix, SmilesRdkitGraph,
     ///     SmilesRdkitScratch,
@@ -165,10 +163,6 @@ where
     ///
     /// assert!(!label.is_empty());
     /// let _fingerprint = CountEcfpFingerprint::new(2, 2048).compute(&negative);
-    /// # }
-    /// # #[cfg(not(feature = "smiles-support"))]
-    /// # fn run() {}
-    /// # run();
     /// ```
     #[inline]
     #[must_use]

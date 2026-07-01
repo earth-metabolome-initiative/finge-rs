@@ -1,4 +1,4 @@
-use alloc::{collections::BTreeMap, vec, vec::Vec};
+use alloc::{collections::BTreeMap, string::String, vec, vec::Vec};
 
 use geometric_traits::traits::{Graph, MonopartiteGraph, MonoplexGraph, Vocabulary};
 
@@ -54,6 +54,25 @@ where
     #[inline]
     fn is_empty_molecule(&self) -> bool {
         self.atom_count() == 0
+    }
+
+    /// Returns the neighboring atom ids of `node_id` by resolving the far
+    /// endpoint of each incident bond.
+    ///
+    /// Bonds that reference `node_id` as neither endpoint (malformed
+    /// self-referential edges) are skipped, matching the per-fingerprint
+    /// adjacency builders.
+    #[inline]
+    fn neighbors(&self, node_id: Self::NodeId) -> impl Iterator<Item = Self::NodeId> + '_ {
+        self.bonds(node_id).filter_map(move |bond| {
+            if bond.source() == node_id {
+                Some(bond.target())
+            } else if bond.target() == node_id {
+                Some(bond.source())
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -117,24 +136,31 @@ where
         let mut atom_codes = Vec::with_capacity(atom_count);
 
         for atom_id in 0..atom_count {
-            let neighbors = self
-                .bonds(atom_id)
-                .filter_map(|bond| {
-                    if bond.source() == atom_id {
-                        Some(bond.target())
-                    } else if bond.target() == atom_id {
-                        Some(bond.source())
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            adjacency.push(neighbors);
+            adjacency.push(self.neighbors(atom_id).collect());
             atom_codes.push(self.atom_pair_atom_code(atom_id));
         }
 
         (adjacency, atom_codes)
     }
+}
+
+/// Graphs that can provide MAP4 rooted circular-substructure labels.
+///
+/// MAP4 shingles pair two atoms' circular substructures with their topological
+/// distance. The substructure is a rooted, non-isomeric canonical SMILES of the
+/// radius-`radius` environment of an atom. The label is an opaque equivalence
+/// key: two environments share a label exactly when they are isomorphic as
+/// center-rooted, typed graphs. Byte parity with RDKit is neither required nor
+/// guaranteed (see `docs/upstream-issues/smiles-parser-map4-api.md`).
+pub trait Map4Graph: MolecularGraph<NodeId = usize>
+where
+    Self::NodeSymbol: MolecularAtom,
+{
+    /// Returns the rooted, non-isomeric circular-substructure SMILES label for
+    /// the radius-`radius` environment of `center`, or `None` when the
+    /// environment is empty (RDKit's empty-shell case, rendered as the empty
+    /// label by [`Map4Fingerprint`](crate::fingerprints::Map4Fingerprint)).
+    fn map4_environment_label(&self, center: usize, radius: usize) -> Option<String>;
 }
 
 /// Graphs that can provide RDKit-style Topological Torsion atom codes.
@@ -173,17 +199,8 @@ where
             }
 
             let neighbors = self
-                .bonds(atom_id)
-                .filter_map(|bond| {
-                    let neighbor = if bond.source() == atom_id {
-                        Some(bond.target())
-                    } else if bond.target() == atom_id {
-                        Some(bond.source())
-                    } else {
-                        None
-                    }?;
-                    (!self.topological_torsion_atom_is_hydrogen(neighbor)).then_some(neighbor)
-                })
+                .neighbors(atom_id)
+                .filter(|&neighbor| !self.topological_torsion_atom_is_hydrogen(neighbor))
                 .collect();
             adjacency.push(neighbors);
         }

@@ -19,7 +19,7 @@ smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", 
 
 [dependencies.finge-rs]
 path = ".."
-features = ["smiles-support", "smarts-support"]
+features = ["smarts-support"]
 
 [[bin]]
 name = "ecfp"
@@ -45,6 +45,13 @@ bench = false
 [[bin]]
 name = "maccs"
 path = "fuzz_targets/maccs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "map4"
+path = "fuzz_targets/map4.rs"
 test = false
 doc = false
 bench = false

@@ -90,6 +90,7 @@ TARGETS=(
   atom_pair
   topological_torsion
   maccs
+  map4
   mutator_atomic_number
   mutator_hypervalent
   mutator_h_count
