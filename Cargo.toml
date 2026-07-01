@@ -11,26 +11,24 @@ homepage = "https://github.com/earth-metabolome-initiative/finge-rs"
 
 [features]
 default = []
-smiles-support = ["dep:elements_rs", "dep:smiles-parser"]
-datasets = ["smiles-support", "smiles-parser/datasets"]
-smarts-support = ["dep:smarts_rs", "dep:smiles-parser"]
+datasets = ["smiles-parser/datasets"]
+smarts-support = ["dep:smarts_rs"]
 # Bridges the LSH index to the `bhtsne` t-SNE via a kNN graph. Pulls in `std`.
 tsne = ["dep:bhtsne", "dep:num-traits"]
 
 [dependencies]
 bhtsne = { version = "0.7.9", optional = true }
 bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
-elements_rs = { version = "0.2.7", optional = true }
+elements_rs = "0.2.7"
 geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", branch = "main", default-features = false, features = ["alloc"] }
 minhash-rs = "0.3.0"
 num-traits = { version = "0.2", default-features = false, optional = true }
 rand_core = { version = "0.6", default-features = false }
 smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "4545f4702115c0a92df2b2761545faf9b0a8191b", package = "smarts-rs", default-features = false, optional = true }
-smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false, optional = true }
+smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false }
 
 [dev-dependencies]
 criterion = "=0.8.2"
-elements_rs = "0.2.7"
 flate2 = "1.1.9"
 indicatif = "0.18.4"
 proptest = "1"
@@ -44,26 +42,21 @@ zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
 [[bench]]
 name = "ecfp"
 harness = false
-required-features = ["smiles-support"]
 
 [[example]]
 name = "compare_rdkit_pubchem_npz"
-required-features = ["smiles-support"]
 
 [[bench]]
 name = "atom_pair"
 harness = false
-required-features = ["smiles-support"]
 
 [[bench]]
 name = "topological_torsion"
 harness = false
-required-features = ["smiles-support"]
 
 [[bench]]
 name = "rdk"
 harness = false
-required-features = ["smiles-support"]
 
 [[bench]]
 name = "maccs"

@@ -23,10 +23,10 @@ cargo run --release --features datasets --example sample_random_parseable_corpus
 Run the Rust benchmarks:
 
 ```bash
-cargo bench --features smiles-support --bench ecfp
-cargo bench --features smiles-support --bench atom_pair
-cargo bench --features smiles-support --bench topological_torsion
-cargo bench --features smiles-support --bench rdk
+cargo bench --bench ecfp
+cargo bench --bench atom_pair
+cargo bench --bench topological_torsion
+cargo bench --bench rdk
 cargo bench --features smarts-support --bench maccs
 ```
 
@@ -41,5 +41,5 @@ uv run --with rdkit python benches/rdkit_fingerprints.py \
 To use a different corpus for the Rust benches:
 
 ```bash
-FINGE_RS_BENCH_SMILES=/path/to/smiles.txt.gz cargo bench --features smiles-support --bench ecfp
+FINGE_RS_BENCH_SMILES=/path/to/smiles.txt.gz cargo bench --bench ecfp
 ```

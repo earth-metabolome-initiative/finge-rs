@@ -19,7 +19,7 @@ smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", 
 
 [dependencies.finge-rs]
 path = ".."
-features = ["smiles-support", "smarts-support"]
+features = ["smarts-support"]
 
 [[bin]]
 name = "ecfp"

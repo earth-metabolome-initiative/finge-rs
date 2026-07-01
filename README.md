@@ -10,15 +10,13 @@ It provides the usual connectivity fingerprints. Morgan/ECFP comes as a bit fing
 
 MAP4 (`Map4Fingerprint`, MinHashed atom pair) rounds out the set. It exposes its raw shingle set, folds into a bit or counted fingerprint like the others, and produces a MinHash signature for similarity work, validated for Tanimoto parity against the reference `map4` implementation. ECFP can be sketched to a MinHash the same way. Those signatures feed `LshIndex`, a banded locality-sensitive-hashing index for approximate nearest-neighbour search over large collections, which can hand a k-NN graph straight to the [`bhtsne`](https://crates.io/crates/bhtsne) t-SNE behind the `tsne` feature.
 
-Under the `smiles-support` feature, `SmilesRdkitScratch` turns a `smiles-parser` molecule into an RDKit-normalized graph that every fingerprint accepts. AtomPair and Topological Torsion also run on a raw `Smiles` when you do not need the normalization step.
+`SmilesRdkitScratch` turns a `smiles-parser` molecule into an RDKit-normalized graph that every fingerprint accepts. AtomPair and Topological Torsion also run on a raw `Smiles` when you do not need the normalization step.
 
 ## Usage
 
 The example below prepares a few molecules, folds ECFP and MAP4 fingerprints, and builds a MAP4 MinHash index to retrieve a molecule's nearest neighbours.
 
 ```rust
-# #[cfg(feature = "smiles-support")]
-# fn main() {
 use finge_rs::{EcfpFingerprint, Fingerprint, LshIndex, Map4Fingerprint};
 use finge_rs::smiles_support::SmilesRdkitScratch;
 use smiles_parser::smiles::Smiles;
@@ -40,7 +38,4 @@ let graph = scratch.try_prepare(&query).expect("preparation should succeed");
 let signature = Map4Fingerprint::default().minhash::<_, u32, 512>(&graph);
 let neighbours = index.query(&signature, 3);
 assert!(!neighbours.is_empty());
-# }
-# #[cfg(not(feature = "smiles-support"))]
-# fn main() {}
 ```

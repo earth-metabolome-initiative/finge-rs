@@ -220,7 +220,7 @@ fn next_arg(args: &mut impl Iterator<Item = String>, name: &str) -> Result<Strin
 
 fn print_usage() {
     eprintln!(
-        "usage: cargo run --release --features smiles-support --example compare_rdkit_pubchem_npz -- --input-dir /tmp/finge_rs_rdkit_pubchem_default [--threads 64] [--limit N] [--max-shards N] [--skip-unparseable] [--mismatch-output failures.tsv] [--fingerprint ecfp|counted-ecfp|layered-counted-ecfp|atom-pair|topological-torsion|maccs|rdk]"
+        "usage: cargo run --release --example compare_rdkit_pubchem_npz -- --input-dir /tmp/finge_rs_rdkit_pubchem_default [--threads 64] [--limit N] [--max-shards N] [--skip-unparseable] [--mismatch-output failures.tsv] [--fingerprint ecfp|counted-ecfp|layered-counted-ecfp|atom-pair|topological-torsion|maccs|rdk]"
     );
 }
 

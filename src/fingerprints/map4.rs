@@ -43,7 +43,6 @@ pub const DEFAULT_MAP4_FP_SIZE: usize = 1024;
 /// Folded bit MAP4 fingerprint, and the shared shingle and MinHash core.
 ///
 /// ```
-/// # #[cfg(feature = "smiles-support")] {
 /// use finge_rs::{Fingerprint, Map4Fingerprint};
 /// use finge_rs::smiles_support::SmilesRdkitScratch;
 /// use smiles_parser::smiles::Smiles;
@@ -59,7 +58,6 @@ pub const DEFAULT_MAP4_FP_SIZE: usize = 1024;
 ///
 /// assert!(!shingles.is_empty());
 /// assert_eq!(signature.estimate_jaccard_index(&signature), 1.0);
-/// # }
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Map4Fingerprint {

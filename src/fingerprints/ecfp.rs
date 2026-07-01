@@ -206,7 +206,6 @@ impl EcfpFingerprint {
     /// `fp.minhash::<_, u32, 1024>(&graph)`.
     ///
     /// ```
-    /// # #[cfg(feature = "smiles-support")] {
     /// use finge_rs::EcfpFingerprint;
     /// use finge_rs::smiles_support::SmilesRdkitScratch;
     /// use smiles_parser::smiles::Smiles;
@@ -217,7 +216,6 @@ impl EcfpFingerprint {
     ///
     /// let signature = EcfpFingerprint::new(2, 2048).minhash::<_, u32, 1024>(&graph);
     /// assert_eq!(signature.estimate_jaccard_index(&signature), 1.0);
-    /// # }
     /// ```
     #[must_use]
     pub fn minhash<G, Word, const N: usize>(&self, graph: &G) -> MinHash<Word, N>
