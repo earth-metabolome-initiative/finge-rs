@@ -5,11 +5,14 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
+pub use minhash_rs::prelude::MinHash;
+
 pub mod atom_invariant_fields;
 pub mod bit_fingerprint;
 pub mod count_fingerprint;
 pub mod fingerprint;
 pub mod fingerprints;
+pub mod lsh;
 pub mod mutations;
 pub mod traits;
 
@@ -32,9 +35,11 @@ pub use crate::{
     count_fingerprint::{CountFingerprint, LayeredCountFingerprint},
     fingerprint::Fingerprint,
     fingerprints::{
-        AtomPairFingerprint, CountEcfpFingerprint, EcfpFingerprint, LayeredCountEcfpFingerprint,
-        RdkFingerprint, TopologicalTorsionFingerprint,
+        AtomPairFingerprint, CountEcfpFingerprint, CountMap4Fingerprint, DEFAULT_MAP4_FP_SIZE,
+        DEFAULT_MAP4_RADIUS, EcfpFingerprint, LayeredCountEcfpFingerprint,
+        MAP4_DISCONNECTED_DISTANCE, Map4Fingerprint, RdkFingerprint, TopologicalTorsionFingerprint,
     },
+    lsh::{LshIndex, Sketcher},
     mutations::{
         AtomFieldOverride, HypervalentMutator, HypervalentPredicate, ImpossibleAtomicNumberMutator,
         ImpossibleAtomicNumberPredicate, ImpossibleBondTypeMutator, ImpossibleBondTypePredicate,
@@ -48,7 +53,7 @@ pub use crate::{
         is_hypervalent, is_impossible_atomic_number, max_natural_valence,
     },
     traits::{
-        AtomPairGraph, EcfpGraph, MolecularAtom, MolecularBond, MolecularGraph,
+        AtomPairGraph, EcfpGraph, Map4Graph, MolecularAtom, MolecularBond, MolecularGraph,
         RdkFingerprintGraph, TopologicalTorsionGraph,
     },
 };
@@ -59,20 +64,20 @@ pub mod prelude {
     pub use crate::MaccsFingerprint;
     pub use crate::{
         AtomFieldOverride, AtomInvariantFields, AtomPairFingerprint, AtomPairGraph, BitFingerprint,
-        CountEcfpFingerprint, CountFingerprint, EcfpFingerprint, EcfpGraph, Fingerprint,
-        HypervalentMutator, HypervalentPredicate, ImpossibleAtomicNumberMutator,
+        CountEcfpFingerprint, CountFingerprint, CountMap4Fingerprint, EcfpFingerprint, EcfpGraph,
+        Fingerprint, HypervalentMutator, HypervalentPredicate, ImpossibleAtomicNumberMutator,
         ImpossibleAtomicNumberPredicate, ImpossibleBondTypeMutator, ImpossibleBondTypePredicate,
         ImpossibleChargeMutator, ImpossibleChargePredicate, ImpossibleHCountMutator,
         ImpossibleHCountPredicate, ImpossibleIsotopeMutator, ImpossibleIsotopePredicate,
         ImpossibleRingFlagMutator, ImpossibleRingFlagPredicate, InvalidatedGraph,
-        LayeredCountEcfpFingerprint, LayeredCountFingerprint, MolecularAtom, MolecularBond,
-        MolecularGraph, Mutator, MutatorError, MutatorMix, PredicateClass, RdkFingerprint,
-        RdkFingerprintGraph, TopologicalPathologyMutator, TopologicalPathologyPredicate,
-        TopologicalTorsionFingerprint, TopologicalTorsionGraph, ViolationClass, ViolationLabel,
-        ViolationPredicate, has_impossible_bond_type, has_impossible_charge,
-        has_impossible_hydrogen_count, has_impossible_isotope, has_impossible_ring_flag,
-        has_topological_pathology, is_hypervalent, is_impossible_atomic_number,
-        max_natural_valence,
+        LayeredCountEcfpFingerprint, LayeredCountFingerprint, Map4Fingerprint, Map4Graph,
+        MolecularAtom, MolecularBond, MolecularGraph, Mutator, MutatorError, MutatorMix,
+        PredicateClass, RdkFingerprint, RdkFingerprintGraph, TopologicalPathologyMutator,
+        TopologicalPathologyPredicate, TopologicalTorsionFingerprint, TopologicalTorsionGraph,
+        ViolationClass, ViolationLabel, ViolationPredicate, has_impossible_bond_type,
+        has_impossible_charge, has_impossible_hydrogen_count, has_impossible_isotope,
+        has_impossible_ring_flag, has_topological_pathology, is_hypervalent,
+        is_impossible_atomic_number, max_natural_valence,
     };
     #[cfg(feature = "smiles-support")]
     pub use crate::{

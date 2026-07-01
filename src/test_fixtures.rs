@@ -170,6 +170,33 @@ pub(crate) struct RdkitRdkFixture {
     pub(crate) cases: Vec<RdkitRdkCase>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct Map4Molecule {
+    pub(crate) smiles: String,
+    pub(crate) elements: Vec<String>,
+    pub(crate) envs: Vec<Vec<String>>,
+    pub(crate) distances: Vec<Vec<i64>>,
+    pub(crate) shingles: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct Map4Fixture {
+    pub(crate) molecules: Vec<Map4Molecule>,
+}
+
+pub(crate) fn map4_reference_fixture() -> &'static Map4Fixture {
+    static FIXTURE: OnceLock<Map4Fixture> = OnceLock::new();
+    FIXTURE.get_or_init(|| {
+        let mut decoder =
+            GzDecoder::new(&include_bytes!("../tests/fixtures/map4_reference.json.gz")[..]);
+        let mut json = String::new();
+        decoder
+            .read_to_string(&mut json)
+            .expect("MAP4 reference fixture should decompress");
+        serde_json::from_str(&json).expect("MAP4 reference fixture should deserialize")
+    })
+}
+
 pub(crate) fn rdkit_ecfp_fixture() -> &'static RdkitEcfpFixture {
     static FIXTURE: OnceLock<RdkitEcfpFixture> = OnceLock::new();
     FIXTURE.get_or_init(|| {

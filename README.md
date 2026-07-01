@@ -4,64 +4,42 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust 1.86+](https://img.shields.io/badge/rust-1.86%2B-orange.svg)](Cargo.toml)
 
-Trait-first molecular fingerprints for `no_std` Rust with `extern crate alloc`.
+finge-rs computes molecular fingerprints in `no_std` Rust (with `extern crate alloc`), built around a small set of traits for molecular atoms, bonds, and graphs so any backend can supply the chemistry. Where it claims RDKit parity it reproduces RDKit's bit output exactly, checked against a tracked corpus of RDKit-parseable SMILES from the scikit-fingerprints HIV set across ECFP radii `0` to `5` and AtomPair, RDK, and Topological Torsion sizes from `64` to `4096`.
 
-Right now the crate provides:
+It provides the usual connectivity fingerprints. Morgan/ECFP comes as a bit fingerprint (`EcfpFingerprint`), a folded-count fingerprint (`CountEcfpFingerprint`), and an exact-radius folded-count variant (`LayeredCountEcfpFingerprint`), and alongside them are 2D AtomPair (`AtomPairFingerprint`), RDKit topological paths (`RdkFingerprint`), Topological Torsion (`TopologicalTorsionFingerprint`), and the 167-bit MACCS keys (`MaccsFingerprint`) behind the `smarts-support` feature. Each folds into a `BitFingerprint` or `CountFingerprint`.
 
-- generic traits for molecular atoms, bonds, and graphs
-- `BitFingerprint`
-- `CountFingerprint`
-- bit-only, non-chiral Morgan/ECFP through `EcfpFingerprint`
-- folded-count, non-chiral Morgan/ECFP through `CountEcfpFingerprint`
-- exact-radius folded-count Morgan/ECFP through `LayeredCountEcfpFingerprint`
-- bit-only, non-chiral 2D AtomPair through `AtomPairFingerprint`
-- bit-only RDKit topological path fingerprints through `RdkFingerprint`
-- bit-only, non-chiral Topological Torsion through `TopologicalTorsionFingerprint`
-- RDKit MACCS keys through `MaccsFingerprint` behind `smarts-support`
-- optional RDKit-normalized `smiles-parser` integration behind `smiles-support`
+MAP4 (`Map4Fingerprint`, MinHashed atom pair) rounds out the set. It exposes its raw shingle set, folds into a bit or counted fingerprint like the others, and produces a MinHash signature for similarity work, validated for Tanimoto parity against the reference `map4` implementation. ECFP can be sketched to a MinHash the same way. Those signatures feed `LshIndex`, a banded locality-sensitive-hashing index for approximate nearest-neighbour search over large collections, which can hand a k-NN graph straight to the [`bhtsne`](https://crates.io/crates/bhtsne) t-SNE behind the `tsne` feature.
 
-Current RDKit parity coverage:
-
-- 1024 `smiles-parser`- and RDKit-parseable SMILES from the tracked scikit-fingerprints HIV fixture corpus
-- bit, folded-count, and exact-radius folded-count ECFP radii `0` through `5`
-- AtomPair, RDK, and Topological Torsion bit sizes `64`, `128`, `256`, `512`, `1024`, `2048`, and `4096`
-- MACCS default 167-bit keys on the same 1024-molecule corpus under `smarts-support`
+Under the `smiles-support` feature, `SmilesRdkitScratch` turns a `smiles-parser` molecule into an RDKit-normalized graph that every fingerprint accepts. AtomPair and Topological Torsion also run on a raw `Smiles` when you do not need the normalization step.
 
 ## Usage
 
-Under `smiles-support`, `SmilesRdkitScratch` prepares a RDKit-normalized
-`smiles-parser` graph that works with both `EcfpFingerprint` and
-`AtomPairFingerprint`/`TopologicalTorsionFingerprint`. `AtomPairFingerprint`
-and `TopologicalTorsionFingerprint` can also run directly on raw
-`Smiles` when you do not need the normalization step.
+The example below prepares a few molecules, folds ECFP and MAP4 fingerprints, and builds a MAP4 MinHash index to retrieve a molecule's nearest neighbours.
 
 ```rust
 # #[cfg(feature = "smiles-support")]
 # fn main() {
-use finge_rs::{
-    AtomPairFingerprint, CountEcfpFingerprint, EcfpFingerprint, Fingerprint,
-    LayeredCountEcfpFingerprint,
-    RdkFingerprint,
-    TopologicalTorsionFingerprint,
-    smiles_support::SmilesRdkitScratch,
-};
+use finge_rs::{EcfpFingerprint, Fingerprint, LshIndex, Map4Fingerprint};
+use finge_rs::smiles_support::SmilesRdkitScratch;
 use smiles_parser::smiles::Smiles;
 
-let smiles: Smiles = "CCO".parse().expect("example SMILES should parse");
 let mut scratch = SmilesRdkitScratch::default();
-let graph = scratch.try_prepare(&smiles).expect("fingerprint preparation should succeed");
-let atom_pair = AtomPairFingerprint::default().compute(&graph);
-let ecfp = EcfpFingerprint::default().compute(&graph);
-let counted_ecfp = CountEcfpFingerprint::default().compute(&graph);
-let layered_counted_ecfp = LayeredCountEcfpFingerprint::default().compute(&graph);
-let rdk = RdkFingerprint::default().compute(&graph);
-let torsion = TopologicalTorsionFingerprint::default().compute(&graph);
-# let _ = atom_pair;
-# let _ = ecfp;
-# let _ = counted_ecfp;
-# let _ = layered_counted_ecfp;
-# let _ = rdk;
-# let _ = torsion;
+let mut index = LshIndex::<u32, 512>::new(256);
+
+for smiles in ["CCO", "OCC1OC(O)C(O)C(O)C1O", "c1ccccc1", "CC(=O)Oc1ccccc1C(=O)O"] {
+    let molecule: Smiles = smiles.parse().expect("example SMILES should parse");
+    let graph = scratch.try_prepare(&molecule).expect("preparation should succeed");
+
+    let _ecfp = EcfpFingerprint::default().compute(&graph);
+    let _map4_bits = Map4Fingerprint::default().compute(&graph);
+    index.insert(Map4Fingerprint::default().minhash::<_, u32, 512>(&graph));
+}
+
+let query: Smiles = "CCO".parse().expect("example SMILES should parse");
+let graph = scratch.try_prepare(&query).expect("preparation should succeed");
+let signature = Map4Fingerprint::default().minhash::<_, u32, 512>(&graph);
+let neighbours = index.query(&signature, 3);
+assert!(!neighbours.is_empty());
 # }
 # #[cfg(not(feature = "smiles-support"))]
 # fn main() {}
