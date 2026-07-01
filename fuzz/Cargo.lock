@@ -107,6 +107,7 @@ dependencies = [
  "bitvec",
  "elements_rs",
  "geometric-traits",
+ "minhash-rs",
  "rand_core 0.6.4",
  "smarts-rs",
  "smiles-parser",
@@ -125,6 +126,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fnv"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
+
+[[package]]
 name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -139,7 +146,7 @@ checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 [[package]]
 name = "geometric-traits"
 version = "0.1.0"
-source = "git+https://github.com/earth-metabolome-initiative/geometric-traits?branch=main#0178cb4712c3868f8bc5dd17b4749ab2a8bdf2b4"
+source = "git+https://github.com/earth-metabolome-initiative/geometric-traits?branch=main#b7c0047eee0212b7c65d5e6356d0aa4a7372563e"
 dependencies = [
  "bitvec",
  "hashbrown",
@@ -229,6 +236,18 @@ name = "maybe-dangling"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59dbb09ed53f8e4f314e353dc6c1853ae5b4c480a668a422657804a544ea9f65"
+
+[[package]]
+name = "minhash-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24aff020288b517871959d9113fd38d0e37a648fa80ee3ac0ab51534016e694d"
+dependencies = [
+ "fnv",
+ "serde",
+ "serde-big-array",
+ "siphasher",
+]
 
 [[package]]
 name = "molecular-formulas"
@@ -348,6 +367,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-big-array"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11fc7cc2c76d73e0f27ee52abbd64eec84d46f370c88371120433196934e4b7f"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -374,6 +402,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
+name = "siphasher"
+version = "0.3.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38b58827f4464d87d377d175e90bf58eb00fd8716ff0a62f80356b5e61555d0d"
+
+[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -393,7 +427,7 @@ dependencies = [
 [[package]]
 name = "smiles-parser"
 version = "0.1.0"
-source = "git+https://github.com/earth-metabolome-initiative/smiles-parser?branch=main#ba32bd63b93083952eac98b60409c67d70b18cd7"
+source = "git+https://github.com/earth-metabolome-initiative/smiles-parser?branch=main#4219d6c11a8b1b79594f9b88f71a7ccd6a283615"
 dependencies = [
  "elements_rs",
  "geometric-traits",

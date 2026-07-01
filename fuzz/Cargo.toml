@@ -50,6 +50,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "map4"
+path = "fuzz_targets/map4.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "mutator_atomic_number"
 path = "fuzz_targets/mutator_atomic_number.rs"
 test = false

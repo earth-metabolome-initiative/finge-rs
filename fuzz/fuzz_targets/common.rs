@@ -8,7 +8,8 @@ use finge_rs::{
     ImpossibleHCountMutator, ImpossibleHCountPredicate, ImpossibleIsotopeMutator,
     ImpossibleIsotopePredicate, ImpossibleRingFlagMutator, ImpossibleRingFlagPredicate,
     InvalidatedGraph, LayeredCountEcfpFingerprint, LayeredCountFingerprint, MaccsFingerprint,
-    MolecularAtom, MolecularBond, MolecularGraph, Mutator, MutatorError,
+    CountMap4Fingerprint, Map4Fingerprint, Map4Graph, MolecularAtom, MolecularBond, MolecularGraph,
+    Mutator, MutatorError,
     TopologicalPathologyMutator, TopologicalPathologyPredicate, TopologicalTorsionFingerprint,
     ViolationPredicate, max_natural_valence, smiles_support::SmilesRdkitScratch,
 };
@@ -166,6 +167,67 @@ pub fn fuzz_atom_pair(smiles: Smiles) {
 
     assert_bit_fingerprint_basics(&prepared_bits);
     assert_bit_fingerprint_basics(&prepared_without_count_sim);
+}
+
+/// Asserts a MAP4 shingle set is structurally well formed: deduplicated and
+/// sorted, every shingle carrying exactly two `|` separators with an integer
+/// distance in the middle and the two environment labels in sorted order.
+fn assert_map4_shingles_well_formed(shingles: &[String]) {
+    assert!(shingles.windows(2).all(|window| window[0] < window[1]));
+    for shingle in shingles {
+        let parts = shingle.split('|').collect::<Vec<_>>();
+        assert_eq!(parts.len(), 3, "shingle must have two separators: {shingle:?}");
+        assert!(
+            parts[1].parse::<usize>().is_ok(),
+            "shingle distance is not an integer: {shingle:?}"
+        );
+        assert!(parts[0] <= parts[2], "shingle env labels are not sorted: {shingle:?}");
+    }
+}
+
+pub fn fuzz_map4(smiles: Smiles) {
+    let fingerprint = Map4Fingerprint::default();
+
+    // Radius-0 environments are always empty (no bonds).
+    for atom in 0..MolecularGraph::atom_count(&smiles) {
+        assert!(smiles.map4_environment_label(atom, 0).is_none());
+        // Env labels are deterministic per (atom, radius).
+        for radius in 1..=fingerprint.radius() {
+            assert_eq!(
+                smiles.map4_environment_label(atom, radius),
+                smiles.map4_environment_label(atom, radius),
+            );
+        }
+    }
+
+    // The shingle set is deterministic and well formed on the raw graph.
+    let shingles = fingerprint.shingles(&smiles);
+    assert_eq!(shingles, fingerprint.shingles(&smiles));
+    assert_map4_shingles_well_formed(&shingles);
+
+    // Folded bit and counted fingerprints are well formed, and their bin
+    // presence agrees.
+    let bits = fingerprint.compute(&smiles);
+    assert_bit_fingerprint_basics(&bits);
+    let counts = CountMap4Fingerprint::default().compute(&smiles);
+    assert_count_fingerprint_basics(&counts);
+    let bit_indices = bits.active_bits().collect::<Vec<_>>();
+    let count_indices = counts.active_counts().map(|(index, _)| index).collect::<Vec<_>>();
+    assert_eq!(bit_indices, count_indices);
+
+    // The MinHash sketch is deterministic and self-identical.
+    let sketch = fingerprint.minhash::<_, u32, 256>(&smiles);
+    assert_eq!(sketch, fingerprint.minhash::<_, u32, 256>(&smiles));
+    assert_eq!(sketch.estimate_jaccard_index(&sketch), 1.0);
+
+    // The RDKit-normalized graph must also be panic-free, deterministic, and
+    // well formed.
+    let mut scratch = SmilesRdkitScratch::default();
+    if let Some(graph) = prepare_graph(&mut scratch, &smiles) {
+        let prepared = fingerprint.shingles(&graph);
+        assert_eq!(prepared, fingerprint.shingles(&graph));
+        assert_map4_shingles_well_formed(&prepared);
+    }
 }
 
 pub fn fuzz_topological_torsion(smiles: Smiles) {
