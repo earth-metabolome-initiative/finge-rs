@@ -8,7 +8,7 @@ finge-rs computes molecular fingerprints in `no_std` Rust (with `extern crate al
 
 It provides the usual connectivity fingerprints. Morgan/ECFP comes as a bit fingerprint (`EcfpFingerprint`), a folded-count fingerprint (`CountEcfpFingerprint`), and an exact-radius folded-count variant (`LayeredCountEcfpFingerprint`), and alongside them are 2D AtomPair (`AtomPairFingerprint`), RDKit topological paths (`RdkFingerprint`), Topological Torsion (`TopologicalTorsionFingerprint`), and the 167-bit MACCS keys (`MaccsFingerprint`) behind the `smarts-support` feature. Each folds into a `BitFingerprint` or `CountFingerprint`.
 
-MAP4 (`Map4Fingerprint`, MinHashed atom pair) rounds out the set. It exposes its raw shingle set, folds into a bit or counted fingerprint like the others, and produces a MinHash signature for similarity work, validated for Tanimoto parity against the reference `map4` implementation. ECFP can be sketched to a MinHash the same way. Those signatures feed `LshIndex`, a banded locality-sensitive-hashing index for approximate nearest-neighbour search over large collections, which can hand a k-NN graph straight to the [`bhtsne`](https://crates.io/crates/bhtsne) t-SNE behind the `tsne` feature.
+MAP4 (`Map4Fingerprint`, MinHashed atom pair) rounds out the set. It exposes its raw shingle set, folds into a bit or counted fingerprint like the others, and produces a MinHash signature for similarity work, validated for Tanimoto parity against the reference `map4` implementation. ECFP can be sketched to a MinHash the same way. Those signatures feed `LshIndex`, a banded locality-sensitive-hashing index for approximate nearest-neighbour search over large collections.
 
 `SmilesRdkitScratch` turns a `smiles-parser` molecule into an RDKit-normalized graph that every fingerprint accepts. AtomPair and Topological Torsion also run on a raw `Smiles` when you do not need the normalization step.
 
@@ -22,7 +22,7 @@ use finge_rs::smiles_support::SmilesRdkitScratch;
 use smiles_parser::smiles::Smiles;
 
 let mut scratch = SmilesRdkitScratch::default();
-let mut index = LshIndex::<u32, 512>::new(256);
+let mut index = LshIndex::<u32, 512, 256>::new();
 
 for smiles in ["CCO", "OCC1OC(O)C(O)C(O)C1O", "c1ccccc1", "CC(=O)Oc1ccccc1C(=O)O"] {
     let molecule: Smiles = smiles.parse().expect("example SMILES should parse");

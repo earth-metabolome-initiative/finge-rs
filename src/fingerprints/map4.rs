@@ -22,7 +22,7 @@
 use alloc::{collections::BTreeSet, format, string::String, vec::Vec};
 
 use geometric_traits::traits::{DenseValuedMatrix, MonoplexGraph, algorithms::PairwiseBFS};
-use minhash_rs::prelude::{Maximal, Min, MinHash, Primitive, XorShift};
+use minhash_rs::prelude::{Maximal, MinHash, MinHasher, Primitive};
 
 use crate::{
     bit_fingerprint::BitFingerprint,
@@ -43,7 +43,7 @@ pub const DEFAULT_MAP4_FP_SIZE: usize = 1024;
 /// Folded bit MAP4 fingerprint, and the shared shingle and MinHash core.
 ///
 /// ```
-/// use finge_rs::{Fingerprint, Map4Fingerprint};
+/// use finge_rs::{Fingerprint, Map4Fingerprint, MinHasher};
 /// use finge_rs::smiles_support::SmilesRdkitScratch;
 /// use smiles_parser::smiles::Smiles;
 ///
@@ -122,37 +122,55 @@ impl Map4Fingerprint {
         G::NodeSymbol: MolecularAtom,
         G::Bond: MolecularBond<NodeId = usize>,
         <G as MonoplexGraph>::Edges: PairwiseBFS,
-        Word: Min + Clone + Eq + Maximal + XorShift,
+        Word: Ord + Copy + Maximal + Primitive<u64>,
         u64: Primitive<Word>,
     {
-        self.shingles(graph).iter().collect()
+        // Gather the shingle keys, then deduplicate before inserting: each
+        // `insert_with_siphashes13` costs `O(N)` register updates, so folding the
+        // `C(n, 2) * radius` occurrences down to distinct keys first is what keeps
+        // sketching fast. Integer sort over `u64` keys replaces the old
+        // `BTreeSet<String>` dedup, dropping the per-occurrence heap string.
+        let mut keys: Vec<u64> = Vec::new();
+        self.for_each_shingle_key(graph, |key| keys.push(key));
+        keys.sort_unstable();
+        keys.dedup();
+
+        let mut sketch = MinHash::new();
+        for key in keys {
+            sketch.insert(key);
+        }
+        sketch
     }
 
-    /// Visits every shingle occurrence (before deduplication) exactly once.
-    /// Folding and the public set view share this single enumeration.
-    fn for_each_shingle<G, F>(&self, graph: &G, mut visit: F)
-    where
+    /// Visits every shingle occurrence (before deduplication) exactly once,
+    /// mapping each environment label through `make_label` and each canonically
+    /// ordered `(low, distance, high)` triple through `combine`. The string set
+    /// view and the hashed sketch and fold paths share this one enumeration, so
+    /// they can never drift into representing different features.
+    fn for_each_shingle_by<G, L, T>(
+        &self,
+        graph: &G,
+        mut make_label: impl FnMut(Option<String>) -> L,
+        combine: impl Fn(&L, usize, &L) -> T,
+        mut visit: impl FnMut(T),
+    ) where
         G: Map4Graph<NodeId = usize>,
         G::NodeSymbol: MolecularAtom,
         G::Bond: MolecularBond<NodeId = usize>,
         <G as MonoplexGraph>::Edges: PairwiseBFS,
-        F: FnMut(String),
+        L: Ord,
     {
         let atom_count = graph.atom_count();
         if self.radius == 0 || atom_count < 2 {
             return;
         }
 
-        // labels[atom][r - 1] is the rooted env label at radius r, "" if empty.
-        let mut labels: Vec<Vec<String>> = Vec::with_capacity(atom_count);
+        // labels[atom][r - 1] is the radius-r environment label representation.
+        let mut labels: Vec<Vec<L>> = Vec::with_capacity(atom_count);
         for atom in 0..atom_count {
             let mut row = Vec::with_capacity(self.radius);
             for radius in 1..=self.radius {
-                row.push(
-                    graph
-                        .map4_environment_label(atom, radius)
-                        .unwrap_or_default(),
-                );
+                row.push(make_label(graph.map4_environment_label(atom, radius)));
             }
             labels.push(row);
         }
@@ -169,14 +187,55 @@ impl Map4Fingerprint {
                     .unwrap_or(MAP4_DISCONNECTED_DISTANCE);
                 for (a, b) in labels[i].iter().zip(&labels[j]) {
                     let (low, high) = if a <= b { (a, b) } else { (b, a) };
-                    visit(format!("{low}|{distance}|{high}"));
+                    visit(combine(low, distance, high));
                 }
             }
         }
     }
 
-    /// Folds each shingle occurrence into a `fp_size` bin via FNV-1a, calling
-    /// `visit` with the bin index.
+    /// The string set view: joins each canonically ordered environment-label
+    /// pair and its distance as `low|distance|high`. This is the RDKit-oracle
+    /// validated MAP4 feature representation, kept for `shingles` and its tests.
+    fn for_each_shingle<G, F>(&self, graph: &G, visit: F)
+    where
+        G: Map4Graph<NodeId = usize>,
+        G::NodeSymbol: MolecularAtom,
+        G::Bond: MolecularBond<NodeId = usize>,
+        <G as MonoplexGraph>::Edges: PairwiseBFS,
+        F: FnMut(String),
+    {
+        self.for_each_shingle_by(
+            graph,
+            |label| label.unwrap_or_default(),
+            |low: &String, distance, high: &String| format!("{low}|{distance}|{high}"),
+            visit,
+        );
+    }
+
+    /// The allocation-light hot path: each shingle occurrence becomes a single
+    /// `u64` key derived from the two environment-label hashes and the distance,
+    /// with no per-pair heap allocation. Equal shingles hash to equal keys, so
+    /// the key-set Jaccard matches the string-set Jaccard up to negligible 64-bit
+    /// collisions. Callers that need the distinct-key set (the MinHash sketch)
+    /// deduplicate the emitted keys themselves.
+    fn for_each_shingle_key<G, F>(&self, graph: &G, visit: F)
+    where
+        G: Map4Graph<NodeId = usize>,
+        G::NodeSymbol: MolecularAtom,
+        G::Bond: MolecularBond<NodeId = usize>,
+        <G as MonoplexGraph>::Edges: PairwiseBFS,
+        F: FnMut(u64),
+    {
+        self.for_each_shingle_by(
+            graph,
+            |label| fnv1a(label.unwrap_or_default().as_bytes()),
+            |&low, distance, &high| combine_key(low, distance, high),
+            visit,
+        );
+    }
+
+    /// Folds each shingle occurrence into a `fp_size` bin, calling `visit` with
+    /// the bin index.
     fn fold<G, F>(&self, graph: &G, mut visit: F)
     where
         G: Map4Graph<NodeId = usize>,
@@ -189,8 +248,8 @@ impl Map4Fingerprint {
             return;
         }
         let fp_size = self.fp_size as u64;
-        self.for_each_shingle(graph, |shingle| {
-            visit((fnv1a(shingle.as_bytes()) % fp_size) as usize);
+        self.for_each_shingle_key(graph, |key| {
+            visit((key % fp_size) as usize);
         });
     }
 }
@@ -224,7 +283,7 @@ where
     G::NodeSymbol: MolecularAtom,
     G::Bond: MolecularBond<NodeId = usize>,
     <G as MonoplexGraph>::Edges: PairwiseBFS,
-    Word: Min + Clone + Eq + Maximal + XorShift,
+    Word: Ord + Copy + Maximal + Primitive<u64>,
     u64: Primitive<Word>,
 {
     #[inline]
@@ -284,7 +343,8 @@ where
     }
 }
 
-/// 64-bit FNV-1a over bytes, used to fold shingle strings into bins.
+/// 64-bit FNV-1a over bytes, used to hash environment labels and combine
+/// shingle keys.
 #[inline]
 fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
@@ -293,6 +353,19 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+/// Combines a canonically ordered pair of environment-label hashes and their
+/// topological distance into one shingle key. Hashing the little-endian bytes
+/// keeps the key stable and platform-independent, and gives each distinct
+/// `(low, distance, high)` triple its own key up to 64-bit collisions.
+#[inline]
+fn combine_key(low: u64, distance: usize, high: u64) -> u64 {
+    let mut bytes = [0u8; 24];
+    bytes[0..8].copy_from_slice(&low.to_le_bytes());
+    bytes[8..16].copy_from_slice(&(distance as u64).to_le_bytes());
+    bytes[16..24].copy_from_slice(&high.to_le_bytes());
+    fnv1a(&bytes)
 }
 
 #[cfg(test)]
@@ -306,7 +379,7 @@ mod tests {
     use std::collections::HashSet;
 
     use geometric_traits::traits::{DenseValuedMatrix, MonoplexGraph, algorithms::PairwiseBFS};
-    use minhash_rs::prelude::MinHash;
+    use minhash_rs::prelude::{MinHash, MinHasher};
     use smiles_parser::smiles::Smiles;
 
     use super::{CountMap4Fingerprint, MAP4_DISCONNECTED_DISTANCE, Map4Fingerprint};

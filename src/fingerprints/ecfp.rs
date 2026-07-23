@@ -1,6 +1,6 @@
 use alloc::{vec, vec::Vec};
 
-use minhash_rs::prelude::{Maximal, Min, MinHash, Primitive, XorShift};
+use minhash_rs::prelude::{Maximal, MinHash, Primitive};
 
 use crate::{
     atom_invariant_fields::morgan_hash_combine as hash_combine,
@@ -206,7 +206,7 @@ impl EcfpFingerprint {
     /// `fp.minhash::<_, u32, 1024>(&graph)`.
     ///
     /// ```
-    /// use finge_rs::EcfpFingerprint;
+    /// use finge_rs::{EcfpFingerprint, MinHasher};
     /// use finge_rs::smiles_support::SmilesRdkitScratch;
     /// use smiles_parser::smiles::Smiles;
     ///
@@ -223,12 +223,12 @@ impl EcfpFingerprint {
         G: EcfpGraph<NodeId = usize>,
         G::NodeSymbol: MolecularAtom,
         G::Bond: MolecularBond<NodeId = usize>,
-        Word: Min + Clone + Eq + Maximal + XorShift,
+        Word: Ord + Copy + Maximal + Primitive<u64>,
         u64: Primitive<Word>,
     {
-        let mut features: Vec<u32> = Vec::new();
-        self.emit_hashes_with_layer(graph, |_layer, hash| features.push(hash));
-        features.iter().collect()
+        let mut features: Vec<u64> = Vec::new();
+        self.emit_hashes_with_layer(graph, |_layer, hash| features.push(u64::from(hash)));
+        features.into_iter().collect()
     }
 
     #[inline]
@@ -273,7 +273,7 @@ where
     G: EcfpGraph<NodeId = usize>,
     G::NodeSymbol: MolecularAtom,
     G::Bond: MolecularBond<NodeId = usize>,
-    Word: Min + Clone + Eq + Maximal + XorShift,
+    Word: Ord + Copy + Maximal + Primitive<u64>,
     u64: Primitive<Word>,
 {
     #[inline]
@@ -592,7 +592,7 @@ mod tests {
 
     use std::collections::HashSet;
 
-    use minhash_rs::prelude::MinHash;
+    use minhash_rs::prelude::{MinHash, MinHasher};
 
     use super::{
         CountEcfpFingerprint, EcfpFingerprint, LayeredCountEcfpFingerprint, adjacency, other_node,

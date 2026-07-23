@@ -13,17 +13,13 @@ homepage = "https://github.com/earth-metabolome-initiative/finge-rs"
 default = []
 datasets = ["smiles-parser/datasets"]
 smarts-support = ["dep:smarts_rs"]
-# Bridges the LSH index to the `bhtsne` t-SNE via a kNN graph. Pulls in `std`.
-tsne = ["dep:bhtsne", "dep:num-traits"]
 
 [dependencies]
-bhtsne = { version = "0.7.9", optional = true }
 bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
-elements_rs = "0.2.7"
+elements_rs = "0.2.8"
 geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", branch = "main", default-features = false, features = ["alloc"] }
-minhash-rs = "0.3.0"
-num-traits = { version = "0.2", default-features = false, optional = true }
-rand_core = { version = "0.6", default-features = false }
+minhash-rs = "0.6"
+rand_core = { version = "0.9", default-features = false }
 smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "4545f4702115c0a92df2b2761545faf9b0a8191b", package = "smarts-rs", default-features = false, optional = true }
 smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false }
 
@@ -32,12 +28,12 @@ criterion = "=0.8.2"
 flate2 = "1.1.9"
 indicatif = "0.18.4"
 proptest = "1"
-rand_chacha = { version = "0.3", default-features = false }
+rand_chacha = { version = "0.9", default-features = false }
 rayon = "1.11.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false, features = ["datasets"] }
-zip = { version = "6.0.0", default-features = false, features = ["deflate"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [[bench]]
 name = "ecfp"
@@ -62,6 +58,14 @@ harness = false
 name = "maccs"
 harness = false
 required-features = ["smarts-support"]
+
+[[bench]]
+name = "lsh"
+harness = false
+
+[[bench]]
+name = "map4"
+harness = false
 
 [profile.release]
 opt-level = 3
