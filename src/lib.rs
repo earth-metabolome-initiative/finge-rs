@@ -5,7 +5,7 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
-pub use minhash_rs::prelude::MinHash;
+pub use minhash_rs::prelude::{MinHash, MinHasher};
 
 pub mod atom_invariant_fields;
 pub mod bit_fingerprint;

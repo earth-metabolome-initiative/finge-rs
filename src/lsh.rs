@@ -19,10 +19,13 @@ use alloc::{
     vec::Vec,
 };
 
-use minhash_rs::prelude::MinHash;
+use minhash_rs::prelude::{Maximal, MinHash, MinHasher, Primitive};
 
 /// Transformation from an item to a MinHash signature (possibly identity).
-pub trait Sketcher<Item, Word, const N: usize> {
+pub trait Sketcher<Item, Word, const N: usize>
+where
+    u64: Primitive<Word>,
+{
     /// Returns the MinHash signature for `item`.
     fn sketch(&self, item: &Item) -> MinHash<Word, N>;
 }
@@ -34,11 +37,11 @@ pub trait Sketcher<Item, Word, const N: usize> {
 ///
 /// // Two item sets sketched into 128-permutation signatures, and a copy of the
 /// // first. The index uses 32 bands of 4 rows each (128 / 32).
-/// let first: MinHash<u32, 128> = [1u64, 2, 3, 4, 5].iter().collect();
-/// let second: MinHash<u32, 128> = [4u64, 5, 6, 7, 8].iter().collect();
-/// let first_again: MinHash<u32, 128> = [1u64, 2, 3, 4, 5].iter().collect();
+/// let first: MinHash<u32, 128> = [1u64, 2, 3, 4, 5].iter().copied().collect();
+/// let second: MinHash<u32, 128> = [4u64, 5, 6, 7, 8].iter().copied().collect();
+/// let first_again: MinHash<u32, 128> = [1u64, 2, 3, 4, 5].iter().copied().collect();
 ///
-/// let mut index = LshIndex::<u32, 128>::new(32);
+/// let mut index = LshIndex::<u32, 128, 32>::new();
 /// index.insert(first);
 /// index.insert(second);
 /// let query_id = index.insert(first_again);
@@ -48,25 +51,30 @@ pub trait Sketcher<Item, Word, const N: usize> {
 /// assert_eq!(hits[0].1, 1.0);
 /// ```
 #[derive(Debug, Clone)]
-pub struct LshIndex<Word, const N: usize> {
-    rows_per_band: usize,
+pub struct LshIndex<Word, const N: usize, const BANDS: usize>
+where
+    u64: Primitive<Word>,
+{
     buckets: Vec<BTreeMap<u64, Vec<u32>>>,
     signatures: Vec<MinHash<Word, N>>,
 }
 
-impl<Word: Copy + Eq + Into<u64>, const N: usize> LshIndex<Word, N> {
-    /// Creates an index that splits each signature into `bands` bands.
+impl<
+    Word: Copy + Ord + Maximal + Primitive<u64> + core::hash::Hash,
+    const N: usize,
+    const BANDS: usize,
+> LshIndex<Word, N, BANDS>
+where
+    u64: Primitive<Word>,
+{
+    /// Creates an empty index that splits each signature into `BANDS` bands.
     ///
-    /// # Panics
-    ///
-    /// Panics if `bands` is zero or does not divide `N`.
+    /// `BANDS` must divide `N`; the divisibility is checked at compile time by
+    /// [`MinHash::band_hashes`], the first time a signature is banded.
     #[must_use]
-    pub fn new(bands: usize) -> Self {
-        assert!(bands > 0, "bands must be positive");
-        assert!(N % bands == 0, "bands must divide the permutation count N");
+    pub fn new() -> Self {
         Self {
-            rows_per_band: N / bands,
-            buckets: (0..bands).map(|_| BTreeMap::new()).collect(),
+            buckets: (0..BANDS).map(|_| BTreeMap::new()).collect(),
             signatures: Vec::new(),
         }
     }
@@ -74,8 +82,8 @@ impl<Word: Copy + Eq + Into<u64>, const N: usize> LshIndex<Word, N> {
     /// Returns the number of bands.
     #[inline]
     #[must_use]
-    pub fn bands(&self) -> usize {
-        self.buckets.len()
+    pub const fn bands(&self) -> usize {
+        BANDS
     }
 
     /// Returns the number of indexed signatures.
@@ -95,10 +103,8 @@ impl<Word: Copy + Eq + Into<u64>, const N: usize> LshIndex<Word, N> {
     /// Inserts a signature, returning its assigned id.
     pub fn insert(&mut self, signature: MinHash<Word, N>) -> u32 {
         let id = u32::try_from(self.signatures.len()).expect("index holds at most u32::MAX items");
-        let registers = signature.as_ref();
-        for (band, buckets) in self.buckets.iter_mut().enumerate() {
-            let key = band_key(self.rows_per_band, band, registers);
-            buckets.entry(key).or_default().push(id);
+        for (band, key) in signature.band_hashes::<BANDS>().into_iter().enumerate() {
+            self.buckets[band].entry(key).or_default().push(id);
         }
         self.signatures.push(signature);
         id
@@ -108,10 +114,9 @@ impl<Word: Copy + Eq + Into<u64>, const N: usize> LshIndex<Word, N> {
     /// sharing at least one band bucket.
     #[must_use]
     pub fn candidates(&self, signature: &MinHash<Word, N>) -> Vec<u32> {
-        let registers = signature.as_ref();
         let mut candidates = BTreeSet::new();
-        for (band, buckets) in self.buckets.iter().enumerate() {
-            if let Some(ids) = buckets.get(&band_key(self.rows_per_band, band, registers)) {
+        for (band, key) in signature.band_hashes::<BANDS>().into_iter().enumerate() {
+            if let Some(ids) = self.buckets[band].get(&key) {
                 candidates.extend(ids.iter().copied());
             }
         }
@@ -151,111 +156,17 @@ impl<Word: Copy + Eq + Into<u64>, const N: usize> LshIndex<Word, N> {
     }
 }
 
-#[cfg(feature = "tsne")]
-impl<Word: Copy + Eq + Into<u64>, const N: usize> LshIndex<Word, N> {
-    /// Builds a fixed-`k` nearest-neighbour graph over every indexed item, in the
-    /// layout `bhtsne::tSNE::barnes_hut_with_neighbors` consumes: `row[i]` holds
-    /// item `i`'s `k` neighbours by ascending distance (`1 - Jaccard` estimate),
-    /// self excluded, every row exactly length `k`.
-    ///
-    /// LSH candidate sets vary in size, so any item with fewer than `k` banding
-    /// candidates falls back to an exact scan over all signatures, guaranteeing
-    /// exactly `k` neighbours per row (bhtsne requires equal-length rows).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `k == 0` or `k >= self.len()`.
-    ///
-    /// ```
-    /// # #[cfg(feature = "tsne")] {
-    /// use finge_rs::{LshIndex, MinHash};
-    ///
-    /// let mut index = LshIndex::<u32, 128>::new(32);
-    /// for items in [vec![1u64, 2, 3], vec![2, 3, 4], vec![7, 8, 9], vec![1, 2, 3, 4]] {
-    ///     index.insert(items.iter().collect::<MinHash<u32, 128>>());
-    /// }
-    ///
-    /// // One length-`k` row per item, ready for `bhtsne::tSNE::barnes_hut_with_neighbors`.
-    /// let graph = index.knn_graph::<f32>(2);
-    /// assert_eq!(graph.len(), 4);
-    /// assert!(graph.iter().all(|row| row.len() == 2));
-    /// # }
-    /// ```
-    #[must_use]
-    pub fn knn_graph<T>(&self, k: usize) -> Vec<Vec<bhtsne::Neighbor<T>>>
-    where
-        T: num_traits::NumCast + Copy,
-    {
-        assert!(k > 0, "k must be positive");
-        assert!(
-            k < self.signatures.len(),
-            "k must be smaller than the number of indexed items"
-        );
-        (0..self.signatures.len())
-            .map(|id| self.knn_row(id, k))
-            .collect()
+impl<
+    Word: Copy + Ord + Maximal + Primitive<u64> + core::hash::Hash,
+    const N: usize,
+    const BANDS: usize,
+> Default for LshIndex<Word, N, BANDS>
+where
+    u64: Primitive<Word>,
+{
+    fn default() -> Self {
+        Self::new()
     }
-
-    fn knn_row<T>(&self, id: usize, k: usize) -> Vec<bhtsne::Neighbor<T>>
-    where
-        T: num_traits::NumCast + Copy,
-    {
-        let signature = &self.signatures[id];
-        let mut scored: Vec<(usize, f64)> = self
-            .candidates(signature)
-            .into_iter()
-            .map(|other| other as usize)
-            .filter(|&other| other != id)
-            .map(|other| {
-                (
-                    other,
-                    self.signatures[other].estimate_jaccard_index(signature),
-                )
-            })
-            .collect();
-        // Banding can under-fill the row; fall back to an exact scan when so.
-        if scored.len() < k {
-            scored = (0..self.signatures.len())
-                .filter(|&other| other != id)
-                .map(|other| {
-                    (
-                        other,
-                        self.signatures[other].estimate_jaccard_index(signature),
-                    )
-                })
-                .collect();
-        }
-        // Ascending distance is descending similarity.
-        scored.sort_unstable_by(|left, right| {
-            right
-                .1
-                .partial_cmp(&left.1)
-                .unwrap_or(core::cmp::Ordering::Equal)
-                .then(left.0.cmp(&right.0))
-        });
-        scored.truncate(k);
-        scored
-            .into_iter()
-            .map(|(other, similarity)| bhtsne::Neighbor {
-                index: other,
-                distance: T::from(1.0 - similarity).expect("Jaccard distance is a finite f64"),
-            })
-            .collect()
-    }
-}
-
-/// FNV-1a hash of one band's register rows.
-fn band_key<Word: Copy + Into<u64>>(rows_per_band: usize, band: usize, registers: &[Word]) -> u64 {
-    let start = band * rows_per_band;
-    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
-    for &register in &registers[start..start + rows_per_band] {
-        let value: u64 = register.into();
-        for byte in value.to_le_bytes() {
-            hash ^= u64::from(byte);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    }
-    hash
 }
 
 #[cfg(test)]
@@ -312,7 +223,7 @@ mod tests {
     #[test]
     fn lsh_retrieves_identical_signature_first() {
         let (sketches, _) = corpus();
-        let mut index = LshIndex::<u32, N>::new(64);
+        let mut index = LshIndex::<u32, N, 64>::new();
         for sketch in &sketches {
             index.insert(*sketch);
         }
@@ -322,6 +233,59 @@ mod tests {
             assert_eq!(hits[0].0 as usize, probe);
             assert_eq!(hits[0].1, 1.0);
         }
+    }
+
+    /// Builds an index at a fixed `BANDS`, prints its sweep line, and returns
+    /// its recall@k. Factored out because `BANDS` is now a const generic, so the
+    /// old runtime `for &bands` loop unrolls into one call per band count.
+    fn sweep_bands<const BANDS: usize>(
+        sketches: &[MinHash<u32, N>],
+        queries: &[usize],
+        truths: &[HashSet<usize>],
+        k: usize,
+        count: usize,
+    ) -> f64 {
+        let build_start = Instant::now();
+        let mut index = LshIndex::<u32, N, BANDS>::new();
+        for sketch in sketches {
+            index.insert(*sketch);
+        }
+        let build_time = build_start.elapsed();
+
+        let mut total_recall = 0.0_f64;
+        let mut total_candidate_recall = 0.0_f64;
+        let mut total_candidates = 0usize;
+        let query_start = Instant::now();
+        for (&query, truth) in queries.iter().zip(truths) {
+            let candidates: HashSet<usize> = index
+                .candidates(&sketches[query])
+                .into_iter()
+                .map(|id| id as usize)
+                .collect();
+            total_candidates += candidates.len();
+            total_candidate_recall += truth.intersection(&candidates).count() as f64 / k as f64;
+
+            let retrieved: HashSet<usize> = index
+                .query(&sketches[query], k + 1)
+                .into_iter()
+                .map(|(id, _)| id as usize)
+                .filter(|&id| id != query)
+                .take(k)
+                .collect();
+            total_recall += truth.intersection(&retrieved).count() as f64 / k as f64;
+        }
+        let query_time = query_start.elapsed();
+
+        let recall = total_recall / queries.len() as f64;
+        let candidate_recall = total_candidate_recall / queries.len() as f64;
+        let mean_candidates = total_candidates as f64 / queries.len() as f64;
+        let rows = N / BANDS;
+        std::eprintln!(
+            "  bands={BANDS:>3} rows={rows:>2}: recall@{k}={recall:.3} cand_recall={candidate_recall:.3} mean_cand={mean_candidates:>6.1} ({:>4.1}% corpus) build={build_time:?} lsh_query={:.3} ms/q",
+            100.0 * mean_candidates / count as f64,
+            query_time.as_secs_f64() * 1000.0 / queries.len() as f64,
+        );
+        recall
     }
 
     #[test]
@@ -345,97 +309,18 @@ mod tests {
             queries.len(),
             brute_time.as_secs_f64() * 1000.0 / queries.len() as f64,
         );
-        let mut best_recall = 0.0_f64;
-        for &bands in &[64usize, 128, 256, 512] {
-            let build_start = Instant::now();
-            let mut index = LshIndex::<u32, N>::new(bands);
-            for sketch in &sketches {
-                index.insert(*sketch);
-            }
-            let build_time = build_start.elapsed();
-
-            let mut total_recall = 0.0_f64;
-            let mut total_candidate_recall = 0.0_f64;
-            let mut total_candidates = 0usize;
-            let query_start = Instant::now();
-            for (&query, truth) in queries.iter().zip(&truths) {
-                let candidates: HashSet<usize> = index
-                    .candidates(&sketches[query])
-                    .into_iter()
-                    .map(|id| id as usize)
-                    .collect();
-                total_candidates += candidates.len();
-                total_candidate_recall += truth.intersection(&candidates).count() as f64 / k as f64;
-
-                let retrieved: HashSet<usize> = index
-                    .query(&sketches[query], k + 1)
-                    .into_iter()
-                    .map(|(id, _)| id as usize)
-                    .filter(|&id| id != query)
-                    .take(k)
-                    .collect();
-                total_recall += truth.intersection(&retrieved).count() as f64 / k as f64;
-            }
-            let query_time = query_start.elapsed();
-
-            let recall = total_recall / queries.len() as f64;
-            let candidate_recall = total_candidate_recall / queries.len() as f64;
-            let mean_candidates = total_candidates as f64 / queries.len() as f64;
-            let rows = N / bands;
-            std::eprintln!(
-                "  bands={bands:>3} rows={rows:>2}: recall@{k}={recall:.3} cand_recall={candidate_recall:.3} mean_cand={mean_candidates:>6.1} ({:>4.1}% corpus) build={build_time:?} lsh_query={:.3} ms/q",
-                100.0 * mean_candidates / count as f64,
-                query_time.as_secs_f64() * 1000.0 / queries.len() as f64,
-            );
-            best_recall = best_recall.max(recall);
-        }
+        let best_recall = sweep_bands::<64>(&sketches, &queries, &truths, k, count)
+            .max(sweep_bands::<128>(&sketches, &queries, &truths, k, count))
+            .max(sweep_bands::<256>(&sketches, &queries, &truths, k, count))
+            .max(sweep_bands::<512>(&sketches, &queries, &truths, k, count));
 
         assert!(best_recall > 0.5, "no band config reached usable recall");
-    }
-
-    #[cfg(feature = "tsne")]
-    #[test]
-    fn lsh_knn_graph_feeds_bhtsne() {
-        let (sketches, _) = corpus();
-        let subset = &sketches[..200];
-        let mut index = LshIndex::<u32, N>::new(256);
-        for sketch in subset {
-            index.insert(*sketch);
-        }
-
-        let k = 15;
-        let knn = index.knn_graph::<f32>(k);
-
-        // Shape and content invariants bhtsne relies on.
-        assert_eq!(knn.len(), subset.len());
-        for (i, row) in knn.iter().enumerate() {
-            assert_eq!(row.len(), k, "every row must have length k");
-            assert!(
-                row.iter()
-                    .all(|nb| nb.index != i && nb.index < subset.len())
-            );
-            assert!(row.windows(2).all(|w| w[0].distance <= w[1].distance));
-            assert!(
-                row.iter()
-                    .all(|nb| nb.distance >= 0.0 && nb.distance.is_finite())
-            );
-        }
-
-        // Feed the graph straight into bhtsne (no metric evaluations) and run a
-        // short optimization; the embedding must be finite and n * 2 long.
-        let data: Vec<u32> = (0..subset.len() as u32).collect();
-        let mut tsne = bhtsne::tSNE::<f32, u32, 2>::new(&data);
-        tsne.perplexity(k as f32 / 3.0).epochs(50);
-        tsne.barnes_hut_with_neighbors(0.5_f32, &knn);
-        let embedding = tsne.embedding();
-        assert_eq!(embedding.len(), subset.len() * 2);
-        assert!(embedding.iter().all(|value| value.is_finite()));
     }
 }
 
 #[cfg(test)]
 mod proptests {
-    use alloc::{vec, vec::Vec};
+    use alloc::vec::Vec;
     use std::collections::HashSet;
 
     use minhash_rs::prelude::MinHash;
@@ -446,7 +331,7 @@ mod proptests {
     const N: usize = 64;
 
     fn sketch(items: &[u64]) -> MinHash<u32, N> {
-        items.iter().collect()
+        items.iter().copied().collect()
     }
 
     /// Item sets drawn from a small universe so the resulting sketches overlap
@@ -455,19 +340,20 @@ mod proptests {
         prop::collection::vec(prop::collection::vec(0u64..40, 0..25), min_len..25)
     }
 
-    /// Band counts that divide `N`.
-    fn bands() -> impl Strategy<Value = usize> {
-        prop::sample::select(vec![1usize, 2, 4, 8, 16, 32, 64])
-    }
+    /// Fixed band split for the proptests (divides `N`). The recall sweep test
+    /// covers the band count as a knob; here it is held constant because it is
+    /// now a const generic, and the invariants under test hold for any valid
+    /// split.
+    const BANDS: usize = 8;
 
     proptest! {
         /// The index never loses an inserted item from its own bucket, and every
         /// query result is a distinct candidate, ranked by descending similarity
         /// in `[0, 1]`, at most `k` of them.
         #[test]
-        fn query_is_well_formed(sets in item_sets(1), bands in bands(), k in 1usize..30) {
+        fn query_is_well_formed(sets in item_sets(1), k in 1usize..30) {
             let sigs: Vec<MinHash<u32, N>> = sets.iter().map(|s| sketch(s)).collect();
-            let mut index = LshIndex::<u32, N>::new(bands);
+            let mut index = LshIndex::<u32, N, BANDS>::new();
             for sig in &sigs {
                 index.insert(*sig);
             }
@@ -488,39 +374,6 @@ mod proptests {
                     prop_assert!(candidate_set.contains(hit_id));
                     prop_assert!(seen.insert(*hit_id), "query ids must be distinct");
                     prop_assert!((0.0..=1.0).contains(similarity));
-                }
-            }
-        }
-    }
-
-    #[cfg(feature = "tsne")]
-    proptest! {
-        /// The kNN graph fed to bhtsne must have one row per item, each of exactly
-        /// `k` distinct in-range neighbours, self excluded, by ascending finite
-        /// distance in `[0, 1]`.
-        #[test]
-        fn knn_graph_rows_satisfy_the_bhtsne_contract(sets in item_sets(5), bands in bands()) {
-            let sigs: Vec<MinHash<u32, N>> = sets.iter().map(|s| sketch(s)).collect();
-            let n = sigs.len();
-            let mut index = LshIndex::<u32, N>::new(bands);
-            for sig in &sigs {
-                index.insert(*sig);
-            }
-            let k = 1 + (n - 1) / 2; // always in [1, n)
-
-            let graph = index.knn_graph::<f32>(k);
-            prop_assert_eq!(graph.len(), n);
-            for (i, row) in graph.iter().enumerate() {
-                prop_assert_eq!(row.len(), k);
-                let mut seen = HashSet::new();
-                let mut previous = f32::NEG_INFINITY;
-                for neighbour in row {
-                    prop_assert!(neighbour.index != i && neighbour.index < n);
-                    prop_assert!(seen.insert(neighbour.index), "neighbour ids must be distinct");
-                    prop_assert!(neighbour.distance >= previous, "distances must ascend");
-                    previous = neighbour.distance;
-                    prop_assert!(neighbour.distance.is_finite());
-                    prop_assert!((0.0..=1.0).contains(&neighbour.distance));
                 }
             }
         }
