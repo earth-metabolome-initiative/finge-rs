@@ -7,6 +7,7 @@ use crate::{
     bit_fingerprint::BitFingerprint,
     count_fingerprint::{CountFingerprint, LayeredCountFingerprint},
     fingerprint::Fingerprint,
+    tanimoto::SparseFingerprint,
     traits::{EcfpGraph, MolecularAtom, MolecularBond},
 };
 
@@ -229,6 +230,38 @@ impl EcfpFingerprint {
         let mut features: Vec<u64> = Vec::new();
         self.emit_hashes_with_layer(graph, |_layer, hash| features.push(u64::from(hash)));
         features.into_iter().collect()
+    }
+
+    /// Builds the exact unfolded ECFP feature set as a [`SparseFingerprint`],
+    /// the raw Morgan identifiers before any folding, for exact Tanimoto
+    /// retrieval through [`TanimotoIndex`](crate::TanimotoIndex). Unlike the
+    /// folded [`compute`](crate::Fingerprint::compute) bit vector, this set
+    /// carries no fold collisions, so its Tanimoto is the true feature-set
+    /// Jaccard.
+    ///
+    /// ```
+    /// use finge_rs::{EcfpFingerprint, TanimotoItem};
+    /// use finge_rs::smiles_support::SmilesRdkitScratch;
+    /// use smiles_parser::smiles::Smiles;
+    ///
+    /// let molecule: Smiles = "c1ccccc1O".parse().unwrap();
+    /// let mut scratch = SmilesRdkitScratch::default();
+    /// let graph = scratch.prepare(&molecule);
+    ///
+    /// let features = EcfpFingerprint::new(2, 2048).unfolded(&graph);
+    /// assert!(!features.is_empty());
+    /// assert_eq!(features.tanimoto(&features), 1.0);
+    /// ```
+    #[must_use]
+    pub fn unfolded<G>(&self, graph: &G) -> SparseFingerprint<u32>
+    where
+        G: EcfpGraph<NodeId = usize>,
+        G::NodeSymbol: MolecularAtom,
+        G::Bond: MolecularBond<NodeId = usize>,
+    {
+        let mut features: Vec<u32> = Vec::new();
+        self.emit_hashes_with_layer(graph, |_layer, hash| features.push(hash));
+        SparseFingerprint::from_ids(features)
     }
 
     #[inline]

@@ -67,6 +67,10 @@ harness = false
 name = "map4"
 harness = false
 
+[[bench]]
+name = "tanimoto"
+harness = false
+
 [profile.release]
 opt-level = 3
 codegen-units = 1

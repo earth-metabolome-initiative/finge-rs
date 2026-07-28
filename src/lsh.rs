@@ -55,8 +55,17 @@ pub struct LshIndex<Word, const N: usize, const BANDS: usize>
 where
     u64: Primitive<Word>,
 {
-    buckets: Vec<BTreeMap<u64, Vec<u32>>>,
+    buckets: Vec<BTreeMap<u64, Vec<u64>>>,
     signatures: Vec<MinHash<Word, N>>,
+}
+
+/// Converts a row id to a slice index. Lossless on the 64-bit hosts this crate
+/// targets, which the const assert enforces at compile time.
+#[inline]
+fn row(id: u64) -> usize {
+    const { assert!(usize::BITS >= u64::BITS, "row ids need a 64-bit usize") };
+    // Lossless per the const assert above.
+    id as usize
 }
 
 impl<
@@ -101,8 +110,8 @@ where
     }
 
     /// Inserts a signature, returning its assigned id.
-    pub fn insert(&mut self, signature: MinHash<Word, N>) -> u32 {
-        let id = u32::try_from(self.signatures.len()).expect("index holds at most u32::MAX items");
+    pub fn insert(&mut self, signature: MinHash<Word, N>) -> u64 {
+        let id = u64::try_from(self.signatures.len()).expect("index holds at most u64::MAX items");
         for (band, key) in signature.band_hashes::<BANDS>().into_iter().enumerate() {
             self.buckets[band].entry(key).or_default().push(id);
         }
@@ -113,7 +122,7 @@ where
     /// Returns the candidate neighbour ids for `signature`: the union of items
     /// sharing at least one band bucket.
     #[must_use]
-    pub fn candidates(&self, signature: &MinHash<Word, N>) -> Vec<u32> {
+    pub fn candidates(&self, signature: &MinHash<Word, N>) -> Vec<u64> {
         let mut candidates = BTreeSet::new();
         for (band, key) in signature.band_hashes::<BANDS>().into_iter().enumerate() {
             if let Some(ids) = self.buckets[band].get(&key) {
@@ -126,14 +135,14 @@ where
     /// Returns up to `k` nearest neighbours by MinHash Jaccard estimate among
     /// the banding candidates, best first.
     #[must_use]
-    pub fn query(&self, signature: &MinHash<Word, N>, k: usize) -> Vec<(u32, f64)> {
-        let mut scored: Vec<(u32, f64)> = self
+    pub fn query(&self, signature: &MinHash<Word, N>, k: usize) -> Vec<(u64, f64)> {
+        let mut scored: Vec<(u64, f64)> = self
             .candidates(signature)
             .into_iter()
             .map(|id| {
                 (
                     id,
-                    self.signatures[id as usize].estimate_jaccard_index(signature),
+                    self.signatures[row(id)].estimate_jaccard_index(signature),
                 )
             })
             .collect();
@@ -151,8 +160,8 @@ where
     /// Returns the stored signature for an id.
     #[inline]
     #[must_use]
-    pub fn signature(&self, id: u32) -> &MinHash<Word, N> {
-        &self.signatures[id as usize]
+    pub fn signature(&self, id: u64) -> &MinHash<Word, N> {
+        &self.signatures[row(id)]
     }
 }
 
@@ -230,7 +239,7 @@ mod tests {
         // A molecule queried against the index returns itself, at similarity 1.0.
         for &probe in &[0usize, 5, 100, 500] {
             let hits = index.query(&sketches[probe], 1);
-            assert_eq!(hits[0].0 as usize, probe);
+            assert_eq!(usize::try_from(hits[0].0).expect("id fits usize"), probe);
             assert_eq!(hits[0].1, 1.0);
         }
     }
@@ -260,7 +269,7 @@ mod tests {
             let candidates: HashSet<usize> = index
                 .candidates(&sketches[query])
                 .into_iter()
-                .map(|id| id as usize)
+                .map(|id| usize::try_from(id).expect("id fits usize"))
                 .collect();
             total_candidates += candidates.len();
             total_candidate_recall += truth.intersection(&candidates).count() as f64 / k as f64;
@@ -268,7 +277,7 @@ mod tests {
             let retrieved: HashSet<usize> = index
                 .query(&sketches[query], k + 1)
                 .into_iter()
-                .map(|(id, _)| id as usize)
+                .map(|(id, _)| usize::try_from(id).expect("id fits usize"))
                 .filter(|&id| id != query)
                 .take(k)
                 .collect();
@@ -361,10 +370,10 @@ mod proptests {
             for (id, sig) in sigs.iter().enumerate() {
                 let candidates = index.candidates(sig);
                 prop_assert!(
-                    candidates.contains(&(id as u32)),
+                    candidates.contains(&(u64::try_from(id).expect("id fits u64"))),
                     "an inserted item must be a candidate for its own signature"
                 );
-                let candidate_set: HashSet<u32> = candidates.iter().copied().collect();
+                let candidate_set: HashSet<u64> = candidates.iter().copied().collect();
 
                 let hits = index.query(sig, k);
                 prop_assert!(hits.len() <= k);

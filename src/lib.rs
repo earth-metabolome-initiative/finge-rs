@@ -14,6 +14,7 @@ pub mod fingerprint;
 pub mod fingerprints;
 pub mod lsh;
 pub mod mutations;
+pub mod tanimoto;
 pub mod traits;
 
 #[cfg(feature = "smarts-support")]
@@ -51,6 +52,7 @@ pub use crate::{
         has_impossible_isotope, has_impossible_ring_flag, has_topological_pathology,
         is_hypervalent, is_impossible_atomic_number, max_natural_valence,
     },
+    tanimoto::{SparseFingerprint, TanimotoIndex, TanimotoItem},
     traits::{
         AtomPairGraph, EcfpGraph, Map4Graph, MolecularAtom, MolecularBond, MolecularGraph,
         RdkFingerprintGraph, TopologicalTorsionGraph,
@@ -71,12 +73,13 @@ pub mod prelude {
         ImpossibleRingFlagMutator, ImpossibleRingFlagPredicate, InvalidatedGraph,
         LayeredCountEcfpFingerprint, LayeredCountFingerprint, Map4Fingerprint, Map4Graph,
         MolecularAtom, MolecularBond, MolecularGraph, Mutator, MutatorError, MutatorMix,
-        PredicateClass, RdkFingerprint, RdkFingerprintGraph, TopologicalPathologyMutator,
-        TopologicalPathologyPredicate, TopologicalTorsionFingerprint, TopologicalTorsionGraph,
-        ViolationClass, ViolationLabel, ViolationPredicate, has_impossible_bond_type,
-        has_impossible_charge, has_impossible_hydrogen_count, has_impossible_isotope,
-        has_impossible_ring_flag, has_topological_pathology, is_hypervalent,
-        is_impossible_atomic_number, max_natural_valence,
+        PredicateClass, RdkFingerprint, RdkFingerprintGraph, SparseFingerprint, TanimotoIndex,
+        TanimotoItem, TopologicalPathologyMutator, TopologicalPathologyPredicate,
+        TopologicalTorsionFingerprint, TopologicalTorsionGraph, ViolationClass, ViolationLabel,
+        ViolationPredicate, has_impossible_bond_type, has_impossible_charge,
+        has_impossible_hydrogen_count, has_impossible_isotope, has_impossible_ring_flag,
+        has_topological_pathology, is_hypervalent, is_impossible_atomic_number,
+        max_natural_valence,
     };
     pub use crate::{
         SmilesEcfpGraph, SmilesEcfpScratch, SmilesPreparationError, SmilesRdkitGraph,

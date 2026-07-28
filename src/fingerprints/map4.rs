@@ -28,6 +28,7 @@ use crate::{
     bit_fingerprint::BitFingerprint,
     count_fingerprint::CountFingerprint,
     fingerprint::Fingerprint,
+    tanimoto::SparseFingerprint,
     traits::{Map4Graph, MolecularAtom, MolecularBond},
 };
 
@@ -140,6 +141,39 @@ impl Map4Fingerprint {
             sketch.insert(key);
         }
         sketch
+    }
+
+    /// Builds the exact unfolded MAP4 shingle-key set as a
+    /// [`SparseFingerprint`], for exact Tanimoto retrieval through
+    /// [`TanimotoIndex`](crate::TanimotoIndex). Unlike the folded
+    /// [`compute`](crate::Fingerprint::compute) bit vector, this set carries no
+    /// fold collisions, so its Tanimoto is the true shingle-set Jaccard (up to
+    /// negligible 64-bit key collisions).
+    ///
+    /// ```
+    /// use finge_rs::{Map4Fingerprint, TanimotoItem};
+    /// use finge_rs::smiles_support::SmilesRdkitScratch;
+    /// use smiles_parser::smiles::Smiles;
+    ///
+    /// let molecule: Smiles = "OCC1OC(O)C(O)C(O)C1O".parse().unwrap();
+    /// let mut scratch = SmilesRdkitScratch::default();
+    /// let graph = scratch.prepare(&molecule);
+    ///
+    /// let features = Map4Fingerprint::default().unfolded(&graph);
+    /// assert!(!features.is_empty());
+    /// assert_eq!(features.tanimoto(&features), 1.0);
+    /// ```
+    #[must_use]
+    pub fn unfolded<G>(&self, graph: &G) -> SparseFingerprint<u64>
+    where
+        G: Map4Graph<NodeId = usize>,
+        G::NodeSymbol: MolecularAtom,
+        G::Bond: MolecularBond<NodeId = usize>,
+        <G as MonoplexGraph>::Edges: PairwiseBFS,
+    {
+        let mut keys: Vec<u64> = Vec::new();
+        self.for_each_shingle_key(graph, |key| keys.push(key));
+        SparseFingerprint::from_ids(keys)
     }
 
     /// Visits every shingle occurrence (before deduplication) exactly once,
