@@ -103,7 +103,7 @@ TARGETS=(
 )
 
 tmux new-session -d -s "${SESSION_NAME}" -n "fuzz" -c "${REPO_ROOT}" \
-  "bash -lc 'cargo fuzz run ${TARGETS[0]} -- ${COMMON_ARGS}'"
+  "bash -lc 'mkdir -p fuzz/corpus/${TARGETS[0]} && cargo fuzz run ${TARGETS[0]} fuzz/corpus/${TARGETS[0]} fuzz/seeds/${TARGETS[0]} -- ${COMMON_ARGS}'"
 # Show pane titles in the top border so each tile is labelled with its
 # harness name.
 tmux set-option -t "${SESSION_NAME}" pane-border-status top
@@ -112,7 +112,7 @@ tmux select-pane -t "${SESSION_NAME}:0.0" -T "${TARGETS[0]}"
 pane_index=0
 for target in "${TARGETS[@]:1}"; do
   tmux split-window -t "${SESSION_NAME}:0" -c "${REPO_ROOT}" \
-    "bash -lc 'cargo fuzz run ${target} -- ${COMMON_ARGS}'"
+    "bash -lc 'mkdir -p fuzz/corpus/${target} && cargo fuzz run ${target} fuzz/corpus/${target} fuzz/seeds/${target} -- ${COMMON_ARGS}'"
   pane_index=$((pane_index + 1))
   tmux select-pane -t "${SESSION_NAME}:0.${pane_index}" -T "${target}"
   tmux select-layout -t "${SESSION_NAME}:0" tiled
