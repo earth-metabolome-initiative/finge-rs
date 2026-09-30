@@ -13,7 +13,7 @@ members = ["."]
 [dependencies]
 arbitrary = { version = "1", features = ["derive"] }
 libfuzzer-sys = "0.4"
-rand_chacha = { version = "0.3", default-features = false }
+rand_chacha = { version = "0.9", default-features = false }
 smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false }
 smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "4545f4702115c0a92df2b2761545faf9b0a8191b", package = "smarts-rs", default-features = false }
 

@@ -9,7 +9,7 @@ use finge_rs::{
     ImpossibleIsotopePredicate, ImpossibleRingFlagMutator, ImpossibleRingFlagPredicate,
     InvalidatedGraph, LayeredCountEcfpFingerprint, LayeredCountFingerprint, MaccsFingerprint,
     CountMap4Fingerprint, Map4Fingerprint, Map4Graph, MolecularAtom, MolecularBond, MolecularGraph,
-    Mutator, MutatorError,
+    MinHasher, Mutator, MutatorError,
     TopologicalPathologyMutator, TopologicalPathologyPredicate, TopologicalTorsionFingerprint,
     ViolationPredicate, max_natural_valence, smiles_support::SmilesRdkitScratch,
 };
