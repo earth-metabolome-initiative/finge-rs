@@ -51,7 +51,7 @@ where
 
         let choice = rng.next_u32();
         let span = SUPER_HEAVY_Z_HIGH - SUPER_HEAVY_Z_LOW + 1;
-        let override_z = if choice % 2 == 0 {
+        let override_z = if choice.is_multiple_of(2) {
             0
         } else {
             SUPER_HEAVY_Z_LOW + (choice / 2) % span

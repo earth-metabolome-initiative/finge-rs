@@ -266,11 +266,11 @@ impl<F: TanimotoItem> TanimotoIndex<F> {
             candidates.push((id, sim));
             if best.len() < k {
                 best.push(Reverse(Sim(sim)));
-            } else if let Some(&Reverse(worst)) = best.peek() {
-                if Sim(sim) > worst {
-                    best.pop();
-                    best.push(Reverse(Sim(sim)));
-                }
+            } else if let Some(&Reverse(worst)) = best.peek()
+                && Sim(sim) > worst
+            {
+                best.pop();
+                best.push(Reverse(Sim(sim)));
             }
         }
         candidates.sort_unstable_by(|lhs, rhs| {

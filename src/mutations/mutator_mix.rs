@@ -741,10 +741,10 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(0x5111_E0E1);
         let mut multi_bit = 0;
         for _ in 0..50 {
-            if let Ok((_, label)) = mix.sample(inner, &mut rng) {
-                if label.count() >= 3 {
-                    multi_bit += 1;
-                }
+            if let Ok((_, label)) = mix.sample(inner, &mut rng)
+                && label.count() >= 3
+            {
+                multi_bit += 1;
             }
         }
         assert_eq!(
