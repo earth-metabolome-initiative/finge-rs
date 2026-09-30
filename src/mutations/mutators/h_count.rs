@@ -81,8 +81,8 @@ mod tests {
         traits::MolecularGraph as _,
     };
 
-    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_parser::smiles::Smiles) {
-        let parsed: smiles_parser::smiles::Smiles =
+    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_rs::smiles::Smiles) {
+        let parsed: smiles_rs::smiles::Smiles =
             smiles.parse().expect("fixture SMILES should parse");
         (SmilesRdkitScratch::default(), parsed)
     }
@@ -146,7 +146,7 @@ mod tests {
     #[test]
     fn fuzz_regression_3df93ad3_ignored_h_atom() {
         use crate::CountEcfpFingerprint;
-        let parsed: smiles_parser::smiles::Smiles =
+        let parsed: smiles_rs::smiles::Smiles =
             "[H]s".parse().expect("fuzz-regression SMILES should parse");
         let mut scratch = SmilesRdkitScratch::default();
         let inner = scratch.prepare(&parsed);

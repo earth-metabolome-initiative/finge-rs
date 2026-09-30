@@ -209,7 +209,7 @@ impl EcfpFingerprint {
     /// ```
     /// use finge_rs::{EcfpFingerprint, MinHasher};
     /// use finge_rs::smiles_support::SmilesRdkitScratch;
-    /// use smiles_parser::smiles::Smiles;
+    /// use smiles_rs::smiles::Smiles;
     ///
     /// let molecule: Smiles = "c1ccccc1O".parse().unwrap();
     /// let mut scratch = SmilesRdkitScratch::default();
@@ -242,7 +242,7 @@ impl EcfpFingerprint {
     /// ```
     /// use finge_rs::{EcfpFingerprint, TanimotoItem};
     /// use finge_rs::smiles_support::SmilesRdkitScratch;
-    /// use smiles_parser::smiles::Smiles;
+    /// use smiles_rs::smiles::Smiles;
     ///
     /// let molecule: Smiles = "c1ccccc1O".parse().unwrap();
     /// let mut scratch = SmilesRdkitScratch::default();
@@ -618,7 +618,7 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use geometric_traits::traits::{Graph, MonopartiteGraph, MonoplexGraph};
-    use smiles_parser::{
+    use smiles_rs::{
         bond::{Bond, bond_edge::BondEdge},
         smiles::Smiles,
     };

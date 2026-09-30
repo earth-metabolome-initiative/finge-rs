@@ -129,7 +129,7 @@ mod tests {
 
     use minhash_rs::prelude::{MinHash, MinHasher};
     use proptest::prelude::*;
-    use smiles_parser::smiles::Smiles;
+    use smiles_rs::smiles::Smiles;
 
     use super::SparseFingerprint;
     use crate::smiles_support::SmilesRdkitScratch;

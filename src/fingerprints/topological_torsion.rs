@@ -489,7 +489,7 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use geometric_traits::traits::{Graph, MonopartiteGraph, MonoplexGraph};
-    use smiles_parser::{
+    use smiles_rs::{
         bond::{Bond, bond_edge::BondEdge},
         smiles::Smiles,
     };

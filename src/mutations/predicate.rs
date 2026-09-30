@@ -483,8 +483,8 @@ mod tests {
         "CC(=O)c1ccccc1",
     ];
 
-    fn parse(smiles: &str) -> (SmilesRdkitScratch, smiles_parser::smiles::Smiles) {
-        let parsed: smiles_parser::smiles::Smiles =
+    fn parse(smiles: &str) -> (SmilesRdkitScratch, smiles_rs::smiles::Smiles) {
+        let parsed: smiles_rs::smiles::Smiles =
             smiles.parse().expect("fixture SMILES should parse");
         (SmilesRdkitScratch::default(), parsed)
     }

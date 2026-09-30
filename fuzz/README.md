@@ -9,7 +9,7 @@ This crate uses `cargo-fuzz` with three targets:
 Each target:
 
 - accepts a fuzzed `String`
-- parses it as a `smiles_parser::smiles::Smiles`
+- parses it as a `smiles_rs::smiles::Smiles`
 - returns early if parsing fails
 - computes the relevant fingerprint(s)
 - asserts basic structural invariants on the result

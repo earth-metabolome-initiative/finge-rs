@@ -4,7 +4,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use finge_rs::{
     CountEcfpFingerprint, EcfpFingerprint, Fingerprint, smiles_support::SmilesRdkitScratch,
 };
-use smiles_parser::smiles::Smiles;
+use smiles_rs::smiles::Smiles;
 
 mod common;
 

@@ -625,7 +625,7 @@ mod tests {
     use alloc::{vec, vec::Vec};
 
     use elements_rs::Element;
-    use smiles_parser::{atom::Atom, smiles::Smiles};
+    use smiles_rs::{atom::Atom, smiles::Smiles};
 
     use super::{RdkFingerprint, hashed_rdk_feature, set_rdk_feature_bits};
     use crate::{

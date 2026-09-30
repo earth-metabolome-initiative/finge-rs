@@ -5,7 +5,7 @@ use finge_rs::{
     BitFingerprint, EcfpFingerprint, Fingerprint, LshIndex, MinHash, SparseFingerprint,
     TanimotoIndex, TanimotoItem, smiles_support::SmilesRdkitScratch,
 };
-use smiles_parser::smiles::Smiles;
+use smiles_rs::smiles::Smiles;
 
 mod common;
 

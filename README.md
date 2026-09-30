@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/earth-metabolome-initiative/finge-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/earth-metabolome-initiative/finge-rs/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Rust 1.86+](https://img.shields.io/badge/rust-1.86%2B-orange.svg)](Cargo.toml)
+[![Rust 1.92+](https://img.shields.io/badge/rust-1.92%2B-orange.svg)](Cargo.toml)
 
 finge-rs computes molecular fingerprints in `no_std` Rust (with `extern crate alloc`), built around a small set of traits for molecular atoms, bonds, and graphs so any backend can supply the chemistry. Where it claims RDKit parity it reproduces RDKit's bit output exactly, checked against a tracked corpus of RDKit-parseable SMILES from the scikit-fingerprints HIV set across ECFP radii `0` to `5` and AtomPair, RDK, and Topological Torsion sizes from `64` to `4096`.
 
@@ -10,7 +10,7 @@ It provides the usual connectivity fingerprints. Morgan/ECFP comes as a bit fing
 
 MAP4 (`Map4Fingerprint`, MinHashed atom pair) rounds out the set. It exposes its raw shingle set, folds into a bit or counted fingerprint like the others, and produces a MinHash signature for similarity work, validated for Tanimoto parity against the reference `map4` implementation. ECFP can be sketched to a MinHash the same way. Those signatures feed `LshIndex`, a banded locality-sensitive-hashing index for approximate nearest-neighbour search over large collections.
 
-`SmilesRdkitScratch` turns a `smiles-parser` molecule into an RDKit-normalized graph that every fingerprint accepts. AtomPair and Topological Torsion also run on a raw `Smiles` when you do not need the normalization step.
+`SmilesRdkitScratch` turns a `smiles-rs` molecule into an RDKit-normalized graph that every fingerprint accepts. AtomPair and Topological Torsion also run on a raw `Smiles` when you do not need the normalization step.
 
 ## Usage
 
@@ -19,7 +19,7 @@ The example below prepares a few molecules, folds ECFP and MAP4 fingerprints, an
 ```rust
 use finge_rs::{EcfpFingerprint, Fingerprint, LshIndex, Map4Fingerprint};
 use finge_rs::smiles_support::SmilesRdkitScratch;
-use smiles_parser::smiles::Smiles;
+use smiles_rs::smiles::Smiles;
 
 let mut scratch = SmilesRdkitScratch::default();
 let mut index = LshIndex::<u32, 512, 256>::new();

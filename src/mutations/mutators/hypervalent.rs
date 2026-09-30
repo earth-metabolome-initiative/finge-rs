@@ -82,8 +82,8 @@ mod tests {
         traits::MolecularGraph as _,
     };
 
-    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_parser::smiles::Smiles) {
-        let parsed: smiles_parser::smiles::Smiles =
+    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_rs::smiles::Smiles) {
+        let parsed: smiles_rs::smiles::Smiles =
             smiles.parse().expect("fixture SMILES should parse");
         (SmilesRdkitScratch::default(), parsed)
     }
@@ -132,7 +132,7 @@ mod tests {
 
     fn assert_count_ecfp_differs_after_hypervalent_mutation(smiles: &str, seed: u64) {
         use crate::CountEcfpFingerprint;
-        let parsed: smiles_parser::smiles::Smiles =
+        let parsed: smiles_rs::smiles::Smiles =
             smiles.parse().expect("fuzz-regression SMILES should parse");
         let mut scratch = SmilesRdkitScratch::default();
         let inner = scratch.prepare(&parsed);

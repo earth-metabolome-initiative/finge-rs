@@ -8,7 +8,7 @@ use std::{
 
 use criterion::{BenchmarkGroup, Throughput, measurement::WallTime};
 use flate2::read::GzDecoder;
-use smiles_parser::smiles::Smiles;
+use smiles_rs::smiles::Smiles;
 
 const DEFAULT_BENCH_CORPUS: &str = "tests/fixtures/pubchem_benchmark_10000_smiles.txt.gz";
 

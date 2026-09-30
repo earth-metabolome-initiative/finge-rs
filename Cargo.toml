@@ -5,23 +5,23 @@ edition = "2024"
 license = "MIT"
 description = "Trait-first no_std molecular fingerprints"
 readme = "README.md"
-rust-version = "1.86"
+rust-version = "1.92"
 repository = "https://github.com/earth-metabolome-initiative/finge-rs"
 homepage = "https://github.com/earth-metabolome-initiative/finge-rs"
 
 [features]
 default = []
-datasets = ["smiles-parser/datasets"]
+datasets = ["smiles-rs/datasets"]
 smarts-support = ["dep:smarts_rs"]
 
 [dependencies]
 bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
 elements_rs = "0.2.8"
-geometric-traits = { git = "https://github.com/earth-metabolome-initiative/geometric-traits", branch = "main", default-features = false, features = ["alloc"] }
+geometric-traits = { version = "0.1", default-features = false, features = ["alloc"] }
 minhash-rs = "0.6"
 rand_core = { version = "0.9", default-features = false }
-smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "4545f4702115c0a92df2b2761545faf9b0a8191b", package = "smarts-rs", default-features = false, optional = true }
-smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false }
+smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "44f43323cf6958789731ee140612bf5f9532b17d", package = "smarts-rs", default-features = false, optional = true }
+smiles-rs = { git = "https://github.com/earth-metabolome-initiative/smiles-rs", branch = "main", default-features = false }
 
 [dev-dependencies]
 criterion = "=0.8.2"
@@ -32,7 +32,7 @@ rand_chacha = { version = "0.9", default-features = false }
 rayon = "1.11.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-smiles-parser = { git = "https://github.com/earth-metabolome-initiative/smiles-parser", branch = "main", default-features = false, features = ["datasets"] }
+smiles-rs = { git = "https://github.com/earth-metabolome-initiative/smiles-rs", branch = "main", default-features = false, features = ["datasets"] }
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [[bench]]

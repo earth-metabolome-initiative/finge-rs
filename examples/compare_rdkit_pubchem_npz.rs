@@ -17,7 +17,7 @@ use finge_rs::{
 use rayon::prelude::*;
 #[cfg(feature = "smarts-support")]
 use smarts_rs::PreparedTarget;
-use smiles_parser::smiles::Smiles;
+use smiles_rs::smiles::Smiles;
 use zip::ZipArchive;
 
 type DynError = Box<dyn Error + Send + Sync>;

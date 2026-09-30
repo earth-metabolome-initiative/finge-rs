@@ -252,7 +252,7 @@ fn hash_combine(seed: &mut u32, value: u32) {
 mod tests {
     use alloc::{vec, vec::Vec};
 
-    use smiles_parser::smiles::Smiles;
+    use smiles_rs::smiles::Smiles;
 
     use super::{AtomPairFingerprint, hashed_atom_pair_bit, visit_atom_pairs};
     use crate::{

@@ -68,7 +68,7 @@ mod tests {
     use alloc::vec::Vec;
 
     use smarts_rs::{CompiledQuery, PreparedTarget, QueryMol};
-    use smiles_parser::{bond::Bond, smiles::Smiles};
+    use smiles_rs::{bond::Bond, smiles::Smiles};
 
     use super::MaccsFingerprint;
     use crate::{Fingerprint, test_fixtures::rdkit_maccs_fixture};

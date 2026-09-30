@@ -59,7 +59,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 #                      `timeout-<hash>` artifact and KEEPS GOING instead
 #                      of exiting with code 70. Useful insurance: even
 #                      with the upstream fix in place, any future slow
-#                      input (in finge-rs, smarts-rs, or the smiles-parser
+#                      input (in finge-rs, smarts-rs, or smiles-rs
 #                      again) will be skipped rather than killing the
 #                      fuzz session. Real panics still stop the run via
 #                      the default error_exitcode=77.
