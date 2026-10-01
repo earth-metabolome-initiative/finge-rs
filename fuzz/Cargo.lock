@@ -379,12 +379,6 @@ checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
 
 [[package]]
 name = "rand_core"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
-
-[[package]]
-name = "rand_core"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
@@ -465,7 +459,7 @@ checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
 [[package]]
 name = "smarts-rs"
 version = "0.1.0"
-source = "git+https://github.com/earth-metabolome-initiative/smarts-rs?rev=44f43323cf6958789731ee140612bf5f9532b17d#44f43323cf6958789731ee140612bf5f9532b17d"
+source = "git+https://github.com/earth-metabolome-initiative/smarts-rs?rev=c4fc4e99dddfdeb2fe10363c6af2f06d213813b9#c4fc4e99dddfdeb2fe10363c6af2f06d213813b9"
 dependencies = [
  "elements_rs",
  "geometric-traits",
@@ -475,8 +469,9 @@ dependencies = [
 
 [[package]]
 name = "smiles-rs"
-version = "0.1.4"
-source = "git+https://github.com/earth-metabolome-initiative/smiles-rs?branch=main#a63f868558b15b153be23ac561efe896466c81a6"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82c668a36ecf662d466a0e4fd965cd5c2fa7220c421ea1d8ebf26a515a312290"
 dependencies = [
  "elements_rs",
  "geometric-traits",
