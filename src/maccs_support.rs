@@ -377,7 +377,7 @@ const RDKIT_MACCS_KEY_DATA: [(u16, &str, u8); 166] = [
 #[cfg(test)]
 mod tests {
     use smarts_rs::{BondLabel, PreparedTarget};
-    use smiles_parser::smiles::Smiles;
+    use smiles_rs::smiles::Smiles;
 
     use super::{
         MACCS_KEY_COUNT, MaccsKeyDefinition, MaccsSpecialCase, RDKIT_MACCS_THRESHOLD_KEY_IDS,

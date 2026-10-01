@@ -2,7 +2,7 @@ use alloc::{string::String, vec, vec::Vec};
 
 use elements_rs::{AllowedValences, ValenceElectrons, isotopes::RelativeAtomicMass};
 use geometric_traits::traits::{Graph, MonopartiteGraph, MonoplexGraph, TypedNode};
-use smiles_parser::{
+use smiles_rs::{
     atom::{Atom, McesAtomType},
     bond::{Bond, bond_edge::BondEdge},
     smiles::{
@@ -971,7 +971,7 @@ fn rdkit_atomic_weight(element: elements_rs::Element) -> f64 {
     }
 }
 
-/// Error raised while preparing a `smiles-parser` graph for RDKit-parity
+/// Error raised while preparing a `smiles-rs` graph for RDKit-parity
 /// fingerprinting.
 #[derive(Debug)]
 pub enum SmilesPreparationError {
@@ -1024,7 +1024,7 @@ fn normalize_smiles_for_rdkit(
     })
 }
 
-/// Reusable scratch for batch RDKit-parity processing over `smiles-parser`
+/// Reusable scratch for batch RDKit-parity processing over `smiles-rs`
 /// graphs.
 ///
 /// This keeps the atom-only ring-membership output and DFS scratch buffers
@@ -1038,7 +1038,7 @@ pub struct SmilesRdkitScratch {
 }
 
 impl SmilesRdkitScratch {
-    /// Prepares a `smiles-parser` graph for RDKit-parity fingerprinting while
+    /// Prepares a `smiles-rs` graph for RDKit-parity fingerprinting while
     /// reusing the normalized graph and atom-ring-membership buffers held by
     /// this scratch object.
     #[inline]
@@ -1064,7 +1064,7 @@ impl SmilesRdkitScratch {
             .expect("fingerprint preparation should succeed for valid SMILES inputs")
     }
 
-    /// Prepares a `smiles-parser` graph for RDKit-parity fingerprinting.
+    /// Prepares a `smiles-rs` graph for RDKit-parity fingerprinting.
     ///
     /// This first normalizes aromaticity to the RDKit-default model, then
     /// populates reusable ring-membership buffers for ECFP.
@@ -1109,7 +1109,7 @@ impl SmilesRdkitScratch {
     }
 }
 
-/// Scratch-prepared RDKit-normalized `smiles-parser` graph view.
+/// Scratch-prepared RDKit-normalized `smiles-rs` graph view.
 ///
 /// Create this through [`SmilesRdkitScratch::prepare`] and pass it to the
 /// normal [`Fingerprint::compute`](crate::Fingerprint::compute) path.
@@ -1499,7 +1499,7 @@ mod tests {
 
     use elements_rs::Element;
     use geometric_traits::traits::{Edges, Graph, MonoplexGraph, TypedNode};
-    use smiles_parser::{
+    use smiles_rs::{
         atom::Atom,
         bond::{Bond, bond_edge::BondEdge},
         smiles::{AromaticityAssignmentApplicationError, Smiles},
@@ -1615,7 +1615,7 @@ mod tests {
     }
 
     #[test]
-    fn smiles_parser_adapter_helpers_cover_atom_and_bond_views() {
+    fn smiles_rs_adapter_helpers_cover_atom_and_bond_views() {
         let smiles: Smiles = "C=O".parse().expect("fixture SMILES should parse");
         let atom = smiles.node_by_id(0).expect("first atom should exist");
         let bond = smiles
@@ -1625,7 +1625,7 @@ mod tests {
         assert_eq!(atom.atom_type(), atom.node_type());
         assert_eq!(bond.source(), 0);
         assert_eq!(bond.target(), 1);
-        assert_eq!(bond.bond_type(), smiles_parser::bond::Bond::Double);
+        assert_eq!(bond.bond_type(), smiles_rs::bond::Bond::Double);
         assert_eq!(MolecularGraph::atom(&smiles, 0), Some(atom));
         assert_eq!(MolecularGraph::bonds(&smiles, 0).count(), 1);
     }
@@ -1935,7 +1935,7 @@ mod tests {
 
     #[test]
     fn rdkit_bond_order_covers_all_supported_bond_variants() {
-        use smiles_parser::bond::Bond;
+        use smiles_rs::bond::Bond;
 
         assert_eq!(rdkit_bond_order(Bond::Single), 1);
         assert_eq!(rdkit_bond_order(Bond::Up), 1);

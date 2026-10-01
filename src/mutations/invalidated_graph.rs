@@ -463,9 +463,8 @@ mod tests {
         MolecularGraph, smiles_support_impl::SmilesRdkitScratch,
     };
 
-    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_parser::smiles::Smiles) {
-        let parsed: smiles_parser::smiles::Smiles =
-            smiles.parse().expect("test SMILES should parse");
+    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_rs::smiles::Smiles) {
+        let parsed: smiles_rs::smiles::Smiles = smiles.parse().expect("test SMILES should parse");
         (SmilesRdkitScratch::default(), parsed)
     }
 

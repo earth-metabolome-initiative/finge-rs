@@ -51,7 +51,7 @@ where
 
         let choice = rng.next_u32();
         let span = SUPER_HEAVY_Z_HIGH - SUPER_HEAVY_Z_LOW + 1;
-        let override_z = if choice % 2 == 0 {
+        let override_z = if choice.is_multiple_of(2) {
             0
         } else {
             SUPER_HEAVY_Z_LOW + (choice / 2) % span
@@ -122,8 +122,8 @@ mod tests {
         values
     }
 
-    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_parser::smiles::Smiles) {
-        let parsed: smiles_parser::smiles::Smiles =
+    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_rs::smiles::Smiles) {
+        let parsed: smiles_rs::smiles::Smiles =
             smiles.parse().expect("fixture SMILES should parse");
         (SmilesRdkitScratch::default(), parsed)
     }
@@ -265,7 +265,7 @@ mod tests {
 
     fn assert_count_ecfp_differs_after_atomic_number_mutation(smiles: &str, seed: u64) {
         use crate::CountEcfpFingerprint;
-        let parsed: smiles_parser::smiles::Smiles =
+        let parsed: smiles_rs::smiles::Smiles =
             smiles.parse().expect("fuzz-regression SMILES should parse");
         let mut scratch = SmilesRdkitScratch::default();
         let inner = scratch.prepare(&parsed);

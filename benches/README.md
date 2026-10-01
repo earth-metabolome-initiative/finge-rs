@@ -8,11 +8,11 @@ tests/fixtures/pubchem_benchmark_10000_smiles.txt.gz
 ```
 
 This file contains 10,000 unique SMILES selected from the random PubChem corpus
-that was already filtered to parse in both `smiles-parser` and RDKit. For a
+that was already filtered to parse in both `smiles-rs` and RDKit. For a
 fresh comparison corpus, generate a random PubChem sample and then keep only
 SMILES that parse in both toolchains before benchmarking.
 
-To generate a fresh `smiles-parser`-parseable sample from PubChem:
+To generate a fresh `smiles-rs`-parseable sample from PubChem:
 
 ```bash
 cargo run --release --features datasets --example sample_random_parseable_corpus -- \

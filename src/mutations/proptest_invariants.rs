@@ -259,7 +259,7 @@ proptest! {
     ) {
         let smiles = FULL_CORPUS[smiles_idx];
         let mut scratch = SmilesRdkitScratch::default();
-        let parsed: smiles_parser::smiles::Smiles = smiles.parse()
+        let parsed: smiles_rs::smiles::Smiles = smiles.parse()
             .expect("fixture SMILES should parse");
         let inner = scratch.prepare(&parsed);
         let baseline = visible_invariant_signature(&inner);
@@ -284,7 +284,7 @@ proptest! {
     ) {
         let smiles = FULL_CORPUS[smiles_idx];
         let mut scratch = SmilesRdkitScratch::default();
-        let parsed: smiles_parser::smiles::Smiles = smiles.parse()
+        let parsed: smiles_rs::smiles::Smiles = smiles.parse()
             .expect("fixture SMILES should parse");
         let inner = scratch.prepare(&parsed);
         let baseline_fields = atom_field_signature(&inner);
@@ -308,7 +308,7 @@ proptest! {
     ) {
         let smiles = FULL_CORPUS[smiles_idx];
         let mut scratch = SmilesRdkitScratch::default();
-        let parsed: smiles_parser::smiles::Smiles = smiles.parse()
+        let parsed: smiles_rs::smiles::Smiles = smiles.parse()
             .expect("fixture SMILES should parse");
         let inner = scratch.prepare(&parsed);
 
@@ -329,7 +329,7 @@ proptest! {
     ) {
         let smiles = SMALL_CORPUS[smiles_idx];
         let mut scratch = SmilesRdkitScratch::default();
-        let parsed: smiles_parser::smiles::Smiles = smiles.parse()
+        let parsed: smiles_rs::smiles::Smiles = smiles.parse()
             .expect("fixture SMILES should parse");
         let inner = scratch.prepare(&parsed);
 
@@ -350,7 +350,7 @@ proptest! {
     ) {
         let smiles = FULL_CORPUS[smiles_idx];
         let mut scratch = SmilesRdkitScratch::default();
-        let parsed: smiles_parser::smiles::Smiles = smiles.parse()
+        let parsed: smiles_rs::smiles::Smiles = smiles.parse()
             .expect("fixture SMILES should parse");
         let inner = scratch.prepare(&parsed);
         let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();
@@ -374,7 +374,7 @@ proptest! {
     ) {
         let smiles = FULL_CORPUS[smiles_idx];
         let mut scratch = SmilesRdkitScratch::default();
-        let parsed: smiles_parser::smiles::Smiles = smiles.parse()
+        let parsed: smiles_rs::smiles::Smiles = smiles.parse()
             .expect("fixture SMILES should parse");
         let inner = scratch.prepare(&parsed);
         let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();

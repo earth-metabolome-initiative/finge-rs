@@ -1,21 +1,21 @@
 #![allow(dead_code)]
 
 use finge_rs::{
-    AtomPairFingerprint, BitFingerprint, CountEcfpFingerprint, CountFingerprint, EcfpFingerprint,
-    EcfpGraph, Fingerprint, HypervalentMutator, HypervalentPredicate,
-    ImpossibleAtomicNumberMutator, ImpossibleAtomicNumberPredicate, ImpossibleBondTypeMutator,
-    ImpossibleBondTypePredicate, ImpossibleChargeMutator, ImpossibleChargePredicate,
-    ImpossibleHCountMutator, ImpossibleHCountPredicate, ImpossibleIsotopeMutator,
-    ImpossibleIsotopePredicate, ImpossibleRingFlagMutator, ImpossibleRingFlagPredicate,
-    InvalidatedGraph, LayeredCountEcfpFingerprint, LayeredCountFingerprint, MaccsFingerprint,
-    CountMap4Fingerprint, Map4Fingerprint, Map4Graph, MolecularAtom, MolecularBond, MolecularGraph,
-    MinHasher, Mutator, MutatorError,
+    AtomPairFingerprint, BitFingerprint, CountEcfpFingerprint, CountFingerprint,
+    CountMap4Fingerprint, EcfpFingerprint, EcfpGraph, Fingerprint, HypervalentMutator,
+    HypervalentPredicate, ImpossibleAtomicNumberMutator, ImpossibleAtomicNumberPredicate,
+    ImpossibleBondTypeMutator, ImpossibleBondTypePredicate, ImpossibleChargeMutator,
+    ImpossibleChargePredicate, ImpossibleHCountMutator, ImpossibleHCountPredicate,
+    ImpossibleIsotopeMutator, ImpossibleIsotopePredicate, ImpossibleRingFlagMutator,
+    ImpossibleRingFlagPredicate, InvalidatedGraph, LayeredCountEcfpFingerprint,
+    LayeredCountFingerprint, MaccsFingerprint, Map4Fingerprint, Map4Graph, MinHasher,
+    MolecularAtom, MolecularBond, MolecularGraph, Mutator, MutatorError,
     TopologicalPathologyMutator, TopologicalPathologyPredicate, TopologicalTorsionFingerprint,
     ViolationPredicate, max_natural_valence, smiles_support::SmilesRdkitScratch,
 };
 use rand_chacha::{ChaCha8Rng, rand_core::SeedableRng};
 use smarts_rs::PreparedTarget;
-use smiles_parser::smiles::Smiles;
+use smiles_rs::smiles::Smiles;
 
 const MAX_INPUT_BYTES: usize = 128;
 
@@ -176,12 +176,19 @@ fn assert_map4_shingles_well_formed(shingles: &[String]) {
     assert!(shingles.windows(2).all(|window| window[0] < window[1]));
     for shingle in shingles {
         let parts = shingle.split('|').collect::<Vec<_>>();
-        assert_eq!(parts.len(), 3, "shingle must have two separators: {shingle:?}");
+        assert_eq!(
+            parts.len(),
+            3,
+            "shingle must have two separators: {shingle:?}"
+        );
         assert!(
             parts[1].parse::<usize>().is_ok(),
             "shingle distance is not an integer: {shingle:?}"
         );
-        assert!(parts[0] <= parts[2], "shingle env labels are not sorted: {shingle:?}");
+        assert!(
+            parts[0] <= parts[2],
+            "shingle env labels are not sorted: {shingle:?}"
+        );
     }
 }
 
@@ -212,7 +219,10 @@ pub fn fuzz_map4(smiles: Smiles) {
     let counts = CountMap4Fingerprint::default().compute(&smiles);
     assert_count_fingerprint_basics(&counts);
     let bit_indices = bits.active_bits().collect::<Vec<_>>();
-    let count_indices = counts.active_counts().map(|(index, _)| index).collect::<Vec<_>>();
+    let count_indices = counts
+        .active_counts()
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
     assert_eq!(bit_indices, count_indices);
 
     // The MinHash sketch is deterministic and self-identical.
@@ -977,7 +987,8 @@ pub fn fuzz_mutator_mix_invariants(smiles: Smiles, seed: u64) {
             // override landed on ECFP-ignored atoms.
             let invariant_changed =
                 visible_invariant_signature(&graph) != visible_invariant_signature(&wrapper);
-            let bonds_changed = bond_invariant_signature(&graph) != bond_invariant_signature(&wrapper);
+            let bonds_changed =
+                bond_invariant_signature(&graph) != bond_invariant_signature(&wrapper);
             assert!(
                 invariant_changed || bonds_changed,
                 "MutatorMix::sample produced a wrapper whose perturbation is invisible to ECFP",
@@ -1010,10 +1021,7 @@ pub fn fuzz_mutator_mix_invariants(smiles: Smiles, seed: u64) {
                             TopologicalPathologyPredicate.check(&wrapper)
                         }
                     };
-                    assert!(
-                        fires,
-                        "label bit {class:?} set but predicate did not fire",
-                    );
+                    assert!(fires, "label bit {class:?} set but predicate did not fire",);
                 }
             }
 

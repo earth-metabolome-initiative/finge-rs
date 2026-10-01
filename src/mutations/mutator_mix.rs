@@ -150,7 +150,7 @@ where
     /// };
     /// use rand_chacha::{ChaCha8Rng, rand_core::SeedableRng};
     ///
-    /// let smiles: smiles_parser::smiles::Smiles =
+    /// let smiles: smiles_rs::smiles::Smiles =
     ///     "c1ccccc1O".parse().expect("phenol is valid SMILES");
     /// let mut scratch = SmilesRdkitScratch::default();
     /// let inner = scratch.prepare(&smiles);
@@ -515,8 +515,8 @@ mod tests {
         smiles_support_impl::{SmilesRdkitGraph, SmilesRdkitScratch},
     };
 
-    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_parser::smiles::Smiles) {
-        let parsed: smiles_parser::smiles::Smiles =
+    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_rs::smiles::Smiles) {
+        let parsed: smiles_rs::smiles::Smiles =
             smiles.parse().expect("fixture SMILES should parse");
         (SmilesRdkitScratch::default(), parsed)
     }
@@ -741,10 +741,10 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(0x5111_E0E1);
         let mut multi_bit = 0;
         for _ in 0..50 {
-            if let Ok((_, label)) = mix.sample(inner, &mut rng) {
-                if label.count() >= 3 {
-                    multi_bit += 1;
-                }
+            if let Ok((_, label)) = mix.sample(inner, &mut rng)
+                && label.count() >= 3
+            {
+                multi_bit += 1;
             }
         }
         assert_eq!(
@@ -817,7 +817,7 @@ mod tests {
         // atom 0's bin, the wrapper's ECFP equals the baseline's.
         // Iterating seeds with a tiny mix forces the filter to trip
         // within a small budget.
-        let parsed: smiles_parser::smiles::Smiles = "BrOBr".parse().expect("parse");
+        let parsed: smiles_rs::smiles::Smiles = "BrOBr".parse().expect("parse");
         let mut scratch = SmilesRdkitScratch::default();
         let graph = scratch.prepare(&parsed);
         let mix = MutatorMix::<SmilesRdkitGraph<'_>>::new()
@@ -844,7 +844,7 @@ mod tests {
         // Sanity: the collision filter must not reject samples whose
         // fingerprints actually differ. CCO with the same setup at a
         // benign seed succeeds.
-        let parsed: smiles_parser::smiles::Smiles = "CCO".parse().expect("parse");
+        let parsed: smiles_rs::smiles::Smiles = "CCO".parse().expect("parse");
         let mut scratch = SmilesRdkitScratch::default();
         let graph = scratch.prepare(&parsed);
         let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates()
@@ -870,7 +870,7 @@ mod tests {
         // invariants over non-ignored atoms would see no change. Pin a
         // position-aware check: the per-atom invariant vector must differ.
         use crate::{EcfpGraph, traits::MolecularGraph as _};
-        let parsed: smiles_parser::smiles::Smiles = "ssI".parse().expect("parse");
+        let parsed: smiles_rs::smiles::Smiles = "ssI".parse().expect("parse");
         let mut scratch = SmilesRdkitScratch::default();
         let graph = scratch.prepare(&parsed);
         let baseline_invariants: alloc::vec::Vec<u32> = (0..graph.atom_count())
@@ -917,7 +917,7 @@ mod tests {
         // and `MutatorMix::sample` returns
         // `MutatorError::CompositionCancelled`. See
         // `fuzz/artifacts/mutator_mix/crash-9f067edf…`.
-        let parsed: smiles_parser::smiles::Smiles = "c8ccccccc8c".parse().expect("parse");
+        let parsed: smiles_rs::smiles::Smiles = "c8ccccccc8c".parse().expect("parse");
         let mut scratch = SmilesRdkitScratch::default();
         let graph = scratch.prepare(&parsed);
         let mix = MutatorMix::<SmilesRdkitGraph<'_>>::with_default_mutators_and_predicates();

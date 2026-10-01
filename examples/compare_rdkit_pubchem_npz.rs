@@ -17,7 +17,7 @@ use finge_rs::{
 use rayon::prelude::*;
 #[cfg(feature = "smarts-support")]
 use smarts_rs::PreparedTarget;
-use smiles_parser::smiles::Smiles;
+use smiles_rs::smiles::Smiles;
 use zip::ZipArchive;
 
 type DynError = Box<dyn Error + Send + Sync>;
@@ -399,10 +399,10 @@ impl Shard {
                 if parse_bit_case(key).is_some_and(|case| args.wants_family(case.family())) {
                     bit_arrays.insert(key.to_owned(), read_npy_u8(&mut archive, name)?);
                 }
-            } else if let Some(key) = name.strip_suffix("__indptr.npy") {
-                if parse_count_case(key).is_some_and(|case| args.wants_family(case.family())) {
-                    count_keys.insert(key.to_owned());
-                }
+            } else if let Some(key) = name.strip_suffix("__indptr.npy")
+                && parse_count_case(key).is_some_and(|case| args.wants_family(case.family()))
+            {
+                count_keys.insert(key.to_owned());
             }
         }
 
@@ -816,11 +816,8 @@ fn read_npy_u32<R: Read + std::io::Seek>(
     if npy.descr != "<u4" {
         return Err(format!("{name} has dtype {}, expected <u4", npy.descr).into());
     }
-    Ok(npy
-        .data
-        .chunks_exact(4)
-        .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("chunk size is 4")))
-        .collect())
+    let (chunks, _) = npy.data.as_chunks::<4>();
+    Ok(chunks.iter().copied().map(u32::from_le_bytes).collect())
 }
 
 fn read_npy_u64<R: Read + std::io::Seek>(
@@ -831,11 +828,8 @@ fn read_npy_u64<R: Read + std::io::Seek>(
     if npy.descr != "<u8" {
         return Err(format!("{name} has dtype {}, expected <u8", npy.descr).into());
     }
-    Ok(npy
-        .data
-        .chunks_exact(8)
-        .map(|chunk| u64::from_le_bytes(chunk.try_into().expect("chunk size is 8")))
-        .collect())
+    let (chunks, _) = npy.data.as_chunks::<8>();
+    Ok(chunks.iter().copied().map(u64::from_le_bytes).collect())
 }
 
 #[derive(Debug)]

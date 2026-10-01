@@ -101,8 +101,8 @@ mod tests {
         smiles_support_impl::SmilesRdkitScratch,
     };
 
-    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_parser::smiles::Smiles) {
-        let parsed: smiles_parser::smiles::Smiles =
+    fn prepared(smiles: &str) -> (SmilesRdkitScratch, smiles_rs::smiles::Smiles) {
+        let parsed: smiles_rs::smiles::Smiles =
             smiles.parse().expect("fixture SMILES should parse");
         (SmilesRdkitScratch::default(), parsed)
     }
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn fuzz_regression_113b2b20_predicate_does_not_fire() {
-        let parsed: smiles_parser::smiles::Smiles = "SSS:B7B-SSB-B7"
+        let parsed: smiles_rs::smiles::Smiles = "SSS:B7B-SSB-B7"
             .parse()
             .expect("fuzz-regression SMILES should parse");
         let mut scratch = SmilesRdkitScratch::default();

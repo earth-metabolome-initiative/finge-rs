@@ -185,7 +185,7 @@ mod tests {
     use std::time::Instant;
 
     use minhash_rs::prelude::MinHash;
-    use smiles_parser::smiles::Smiles;
+    use smiles_rs::smiles::Smiles;
 
     use super::{LshIndex, Sketcher};
     use crate::{fingerprints::Map4Fingerprint, test_fixtures::map4_reference_fixture};

@@ -46,7 +46,7 @@ pub const DEFAULT_MAP4_FP_SIZE: usize = 1024;
 /// ```
 /// use finge_rs::{Fingerprint, Map4Fingerprint, MinHasher};
 /// use finge_rs::smiles_support::SmilesRdkitScratch;
-/// use smiles_parser::smiles::Smiles;
+/// use smiles_rs::smiles::Smiles;
 ///
 /// let molecule: Smiles = "OCC1OC(O)C(O)C(O)C1O".parse().unwrap();
 /// let mut scratch = SmilesRdkitScratch::default();
@@ -153,7 +153,7 @@ impl Map4Fingerprint {
     /// ```
     /// use finge_rs::{Map4Fingerprint, TanimotoItem};
     /// use finge_rs::smiles_support::SmilesRdkitScratch;
-    /// use smiles_parser::smiles::Smiles;
+    /// use smiles_rs::smiles::Smiles;
     ///
     /// let molecule: Smiles = "OCC1OC(O)C(O)C(O)C1O".parse().unwrap();
     /// let mut scratch = SmilesRdkitScratch::default();
@@ -414,7 +414,7 @@ mod tests {
 
     use geometric_traits::traits::{DenseValuedMatrix, MonoplexGraph, algorithms::PairwiseBFS};
     use minhash_rs::prelude::{MinHash, MinHasher};
-    use smiles_parser::smiles::Smiles;
+    use smiles_rs::smiles::Smiles;
 
     use super::{CountMap4Fingerprint, MAP4_DISCONNECTED_DISTANCE, Map4Fingerprint};
     use crate::{
