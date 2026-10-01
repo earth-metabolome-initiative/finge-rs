@@ -21,6 +21,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
@@ -36,6 +37,11 @@ jobs:
 
       - name: Run all-features test suite
         run: cargo test --all-features
+
+      - name: Build WebAssembly libraries
+        run: |
+          cargo build --lib --target wasm32-unknown-unknown --no-default-features
+          cargo build --lib --target wasm32-unknown-unknown --no-default-features --features smarts-support
 
       - name: Check benchmark target
         run: cargo bench --bench ecfp --no-run
