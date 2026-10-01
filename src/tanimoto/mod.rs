@@ -17,22 +17,14 @@ mod sparse;
 
 pub use sparse::SparseFingerprint;
 
-/// Converts a push index to a row id. Lossless on the 64-bit hosts this crate
-/// targets, enforced by the const assert.
 #[inline]
 fn id_of(i: usize) -> u64 {
-    const { assert!(usize::BITS <= u64::BITS, "usize must fit a u64 row id") };
-    // Lossless per the const assert above.
-    i as u64
+    u64::try_from(i).expect("index holds at most u64::MAX items")
 }
 
-/// Converts a row id to a slice index. Lossless on the 64-bit hosts this crate
-/// targets, enforced by the const assert.
 #[inline]
 fn index_of(id: u64) -> usize {
-    const { assert!(usize::BITS >= u64::BITS, "row ids need a 64-bit usize") };
-    // Lossless per the const assert above.
-    id as usize
+    usize::try_from(id).expect("row id must fit usize")
 }
 
 /// An item the [`TanimotoIndex`] can store and compare.
@@ -117,7 +109,7 @@ impl<F> TanimotoIndex<F> {
         self.items.is_empty()
     }
 
-    /// Returns the stored item for an id.
+    /// Returns the stored item, panicking if `id` is out of range.
     #[inline]
     #[must_use]
     pub fn item(&self, id: u64) -> &F {
@@ -381,6 +373,14 @@ mod tests {
         });
         scored.truncate(k);
         scored
+    }
+
+    #[test]
+    #[should_panic]
+    fn item_rejects_oversized_row_id() {
+        let mut index = TanimotoIndex::new();
+        index.insert(fp(8, &[0]));
+        let _ = index.item(1u64 << 32);
     }
 
     #[test]

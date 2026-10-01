@@ -12,6 +12,8 @@ MAP4 (`Map4Fingerprint`, MinHashed atom pair) rounds out the set. It exposes its
 
 `SmilesRdkitScratch` turns a `smiles-rs` molecule into an RDKit-normalized graph that every fingerprint accepts. AtomPair and Topological Torsion also run on a raw `Smiles` when you do not need the normalization step.
 
+Fingerprinting, `LshIndex` and `TanimotoIndex` support `wasm32-unknown-unknown`, including the `smarts-support` feature.
+
 ## Usage
 
 The example below prepares a few molecules, folds ECFP and MAP4 fingerprints, and builds a MAP4 MinHash index to retrieve a molecule's nearest neighbours.

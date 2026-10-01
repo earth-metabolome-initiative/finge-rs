@@ -59,13 +59,9 @@ where
     signatures: Vec<MinHash<Word, N>>,
 }
 
-/// Converts a row id to a slice index. Lossless on the 64-bit hosts this crate
-/// targets, which the const assert enforces at compile time.
 #[inline]
 fn row(id: u64) -> usize {
-    const { assert!(usize::BITS >= u64::BITS, "row ids need a 64-bit usize") };
-    // Lossless per the const assert above.
-    id as usize
+    usize::try_from(id).expect("row id must fit usize")
 }
 
 impl<
@@ -157,7 +153,7 @@ where
         scored
     }
 
-    /// Returns the stored signature for an id.
+    /// Returns the stored signature, panicking if `id` is out of range.
     #[inline]
     #[must_use]
     pub fn signature(&self, id: u64) -> &MinHash<Word, N> {
@@ -227,6 +223,15 @@ mod tests {
         });
         scored.truncate(k);
         scored.into_iter().map(|(i, _)| i).collect()
+    }
+
+    #[test]
+    #[should_panic]
+    fn signature_rejects_oversized_row_id() {
+        let signature: MinHash<u32, 64> = [1u64].into_iter().collect();
+        let mut index = LshIndex::<u32, 64, 8>::new();
+        index.insert(signature);
+        let _ = index.signature(1u64 << 32);
     }
 
     #[test]
