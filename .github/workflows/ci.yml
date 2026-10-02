@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run default test suite
+        run: cargo test
+
+      - name: Run all-features test suite
+        run: cargo test --all-features
+
+      - name: Build WebAssembly libraries
+        run: |
+          cargo build --lib --target wasm32-unknown-unknown --no-default-features
+          cargo build --lib --target wasm32-unknown-unknown --no-default-features --features smarts-support
+
+      - name: Check benchmark target
+        run: cargo bench --bench ecfp --no-run
+
+      - name: Check AtomPair benchmark target
+        run: cargo bench --bench atom_pair --no-run
+
+      - name: Check TopologicalTorsion benchmark target
+        run: cargo bench --bench topological_torsion --no-run
+
+      - name: Check RDK benchmark target
+        run: cargo bench --bench rdk --no-run

@@ -1,0 +1,82 @@
+[package]
+name = "finge-rs"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Trait-first no_std molecular fingerprints"
+readme = "README.md"
+rust-version = "1.92"
+repository = "https://github.com/earth-metabolome-initiative/finge-rs"
+homepage = "https://github.com/earth-metabolome-initiative/finge-rs"
+
+[features]
+default = []
+datasets = ["smiles-rs/datasets"]
+smarts-support = ["dep:smarts_rs"]
+
+[dependencies]
+bitvec = { version = "1.0.1", default-features = false, features = ["alloc"] }
+elements_rs = "0.2.8"
+geometric-traits = { version = "0.1", default-features = false, features = ["alloc"] }
+minhash-rs = "0.6"
+rand_core = { version = "0.9", default-features = false }
+smarts_rs = { git = "https://github.com/earth-metabolome-initiative/smarts-rs", rev = "c4fc4e99dddfdeb2fe10363c6af2f06d213813b9", package = "smarts-rs", default-features = false, optional = true }
+smiles-rs = { version = "0.1.5", default-features = false }
+
+[dev-dependencies]
+criterion = "=0.8.2"
+flate2 = "1.1.9"
+indicatif = "0.18.4"
+proptest = "1"
+rand_chacha = { version = "0.9", default-features = false }
+rayon = "1.11.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+smiles-rs = { version = "0.1.5", default-features = false, features = ["datasets"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+
+[[bench]]
+name = "ecfp"
+harness = false
+
+[[example]]
+name = "compare_rdkit_pubchem_npz"
+
+[[bench]]
+name = "atom_pair"
+harness = false
+
+[[bench]]
+name = "topological_torsion"
+harness = false
+
+[[bench]]
+name = "rdk"
+harness = false
+
+[[bench]]
+name = "maccs"
+harness = false
+required-features = ["smarts-support"]
+
+[[bench]]
+name = "lsh"
+harness = false
+
+[[bench]]
+name = "map4"
+harness = false
+
+[[bench]]
+name = "tanimoto"
+harness = false
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+strip = "debuginfo"
+
+[profile.bench]
+inherits = "release"
+debug = true
